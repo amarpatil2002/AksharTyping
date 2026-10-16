@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, Command, Sparkles } from "lucide-react";
+import { ArrowRight, Command } from "lucide-react";
 
 import Input from "../components/ui/Input";
-import Button from "../components/ui/Button";
 import { registerUser } from "../services/authService";
-import type { RegisterPayload } from "../types/auth";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -47,16 +45,23 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      await registerUser({
+      const result = await registerUser({
         name: name.trim(),
         email: email.trim(),
         password,
+      });
+
+      navigate("/login", {
+        replace: true,
+        state: {
+          message: result.message ?? "Account created. Please log in.",
+        },
       });
     } catch (error) {
       setServerError(
         error instanceof Error
           ? error.message
-          : "Unable to create your account. Please try again.",
+          : "Registration failed. Please try again.",
       );
     } finally {
       setLoading(false);
@@ -67,7 +72,7 @@ export default function SignupPage() {
     <div className="w-full">
       <Link
         to="/"
-        className="mb-8 inline-flex items-center gap-2.5"
+        className="mb-2 inline-flex items-center gap-2"
         aria-label="Akshar AI home"
       >
         <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white">
@@ -79,21 +84,17 @@ export default function SignupPage() {
       </Link>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-900/[0.04] sm:p-8">
-        <div className="mb-7">
-          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-            <Sparkles size={22} />
-          </div>
-
+        <div className="mb-5">
           <h1 className="text-2xl font-bold tracking-tight text-slate-950">
             Create your account
           </h1>
 
-          <p className="mt-2 text-sm leading-6 text-slate-500">
+          <p className="mt-1 text-sm leading-6 text-slate-500">
             Start improving your typing skills with Akshar AI.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate className="space-y-5">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <Input
             id="name"
             name="name"
@@ -149,13 +150,13 @@ export default function SignupPage() {
             {!loading && <ArrowRight size={17} />}
           </button>
 
-          <p className="text-xs leading-5 text-slate-500">
+          <p className="text-xs leading-4 text-slate-500">
             By creating an account, you agree to our Terms of Service and
             Privacy Policy. Add links to these documents before launch.
           </p>
         </form>
 
-        <div className="mt-6 border-t border-slate-100 pt-6 text-center text-sm text-slate-600">
+        <div className="mt-2 border-t border-slate-100 pt-2 text-center text-sm text-slate-600">
           Already have an account?{" "}
           <Link
             to="/login"

@@ -6,7 +6,13 @@ import AppLayout from "../src/layouts/AppLayout";
 
 import LandingPage from "../src/pages/LandingPage";
 import NotFoundPage from "../src/pages/PageNotfound";
-import PlaceholderPage from "../src/pages/PlaceHolderPage";
+import PlaceholderPage from "../src/pages/PlaceholderPage";
+
+import LoginPage from "../src/pages/LoginPage";
+import SignupPage from "../src/pages/SignupPage";
+import DashboardPage from "./pages/DashboardPage";
+import TypingTestPage from "./pages/TypingTestPage";
+import PassagesPage from "./pages/PassagePage";
 
 const router = createBrowserRouter([
   {
@@ -23,11 +29,11 @@ const router = createBrowserRouter([
     children: [
       {
         path: "/login",
-        element: <PlaceholderPage title="Login" />,
+        element: <LoginPage />,
       },
       {
         path: "/signup",
-        element: <PlaceholderPage title="Create account" />,
+        element: <SignupPage />,
       },
     ],
   },
@@ -36,15 +42,27 @@ const router = createBrowserRouter([
     children: [
       {
         path: "/dashboard",
-        element: <PlaceholderPage title="Dashboard" />,
+        element: <DashboardPage />,
+      },
+      {
+        path: "/passages",
+        element: <PassagesPage />,
       },
       {
         path: "/typing",
-        element: <PlaceholderPage title="Typing Practice" />,
+        element: <TypingTestPage />,
       },
       {
         path: "/ai-coach",
         element: <PlaceholderPage title="AI Coach" />,
+      },
+      {
+        path: "/analytics",
+        element: <PlaceholderPage title="Analytics" />,
+      },
+      {
+        path: "/achievements",
+        element: <PlaceholderPage title="Achievements" />,
       },
 
       {
