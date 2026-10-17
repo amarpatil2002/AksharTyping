@@ -1,18 +1,24 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
-import PublicLayout from "../src/layouts/PublicLayout";
-import AuthLayout from "../src/layouts//AuthLayout";
-import AppLayout from "../src/layouts/AppLayout";
+import PublicLayout from "./layouts/PublicLayout";
+import AuthLayout from "./layouts/AuthLayout";
+import AppLayout from "./layouts/AppLayout";
 
-import LandingPage from "../src/pages/LandingPage";
-import NotFoundPage from "../src/pages/PageNotfound";
-import PlaceholderPage from "../src/pages/PlaceholderPage";
+import LandingPage from "./pages/LandingPage";
+import NotFoundPage from "./pages/PageNotfound";
+import PlaceholderPage from "./pages/PlaceholderPage";
 
-import LoginPage from "../src/pages/LoginPage";
-import SignupPage from "../src/pages/SignupPage";
+import LoginPage from "./pages/LoginPage";
+import SignupPage from "./pages/SignupPage";
 import DashboardPage from "./pages/DashboardPage";
 import TypingTestPage from "./pages/TypingTestPage";
 import PassagesPage from "./pages/PassagePage";
+import ExamPracticePage from "./pages/exams/ExamPracticePage";
+import ExamInstructionsPage from "./pages/exams/ExamInstructionsPage";
+import ExamKeyboardTestPage from "./pages/exams/ExamKeyboardTestPage";
+import ExamBreakPage from "./pages/exams/ExamBreakPage";
+import ExamTestPage from "./pages/exams/ExamTestPage";
+import ExamResultsPage from "./pages/exams/ExamResultsPage";
 
 const router = createBrowserRouter([
   {
@@ -51,6 +57,30 @@ const router = createBrowserRouter([
       {
         path: "/typing",
         element: <TypingTestPage />,
+      },
+      {
+        path: "exam",
+        element: <ExamPracticePage />,
+      },
+      {
+        path: "exam/:examId/instructions",
+        element: <ExamInstructionsPage />,
+      },
+      {
+        path: "exam/:examId/keyboard-test",
+        element: <ExamKeyboardTestPage />,
+      },
+      {
+        path: "exam/:examId/break",
+        element: <ExamBreakPage />,
+      },
+      {
+        path: "exam/:examId/test",
+        element: <ExamTestPage />,
+      },
+      {
+        path: "exam/:examId/result",
+        element: <ExamResultsPage />,
       },
       {
         path: "/ai-coach",

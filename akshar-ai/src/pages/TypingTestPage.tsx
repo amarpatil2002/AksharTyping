@@ -4,16 +4,20 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
+  Highlighter,
   Keyboard,
+  Layers,
   RotateCcw,
   Target,
   Trophy,
   Zap,
+  Columns2,
 } from "lucide-react";
+
 import type { Passage } from "../features/passages/passageData";
 import { ADMIN_PASSAGES } from "../features/passages/passageData";
 
-type TypingMode = "separate" | "overlay";
+type TypingLayout = "overlay" | "horizontal";
 type TestStatus = "idle" | "running" | "completed";
 
 interface TypingNavigationState {
@@ -46,10 +50,10 @@ export default function TypingTestPage() {
   const navigate = useNavigate();
 
   const navigationState = location.state as TypingNavigationState | null;
-
   const passage = navigationState?.passage ?? DEFAULT_PASSAGE;
 
   const requestedDuration = Number(navigationState?.durationSeconds);
+
   const initialDuration =
     Number.isFinite(requestedDuration) &&
     requestedDuration >= 10 &&
@@ -60,10 +64,14 @@ export default function TypingTestPage() {
   const [typedText, setTypedText] = useState("");
   const [remainingTime, setRemainingTime] = useState(initialDuration);
   const [status, setStatus] = useState<TestStatus>("idle");
-  const [typingMode, setTypingMode] = useState<TypingMode>("overlay");
+
+  // Overlay and horizontal are mutually exclusive layout choices.
+  const [typingLayout, setTypingLayout] = useState<TypingLayout>("overlay");
+
+  // Text highlighting can be switched independently.
+  const [textHighlight, setTextHighlight] = useState(true);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const startTimeRef = useRef<number | null>(null);
 
   const elapsedSeconds = initialDuration - remainingTime;
 
@@ -91,16 +99,11 @@ export default function TypingTestPage() {
       ? Math.round(correctCharacters / 5 / (elapsedSeconds / 60))
       : 0;
 
-  const progress =
-    passage.text.length > 0
-      ? Math.min((typedText.length / passage.text.length) * 100, 100)
-      : 0;
-
   const finishTest = useCallback(() => {
     setStatus("completed");
   }, []);
 
-  // Countdown begins with the first typed character.
+  // Start the countdown after the first character is typed.
   useEffect(() => {
     if (status !== "running") return;
 
@@ -122,13 +125,11 @@ export default function TypingTestPage() {
   const handleTyping = (value: string) => {
     if (status === "completed") return;
 
-    // Keep typing input on one line to match normalized passages.
     const nextValue = value
       .replace(/[\r\n]/g, "")
       .slice(0, passage.text.length);
 
     if (status === "idle" && nextValue.length > 0) {
-      startTimeRef.current = Date.now();
       setStatus("running");
     }
 
@@ -143,7 +144,6 @@ export default function TypingTestPage() {
     setTypedText("");
     setRemainingTime(initialDuration);
     setStatus("idle");
-    startTimeRef.current = null;
 
     window.requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -154,31 +154,37 @@ export default function TypingTestPage() {
     navigate("/passages");
   };
 
-  const characterStatus = (index: number) => {
-    if (index >= typedText.length) return "remaining";
-
-    return typedText[index] === passage.text[index] ? "correct" : "incorrect";
-  };
-
+  // Render the reference text, optionally highlighting typed characters.
   const renderCharacters = () =>
     passage.text.split("").map((character, index) => {
-      const state = characterStatus(index);
-
-      const colorClass =
-        state === "correct"
-          ? "text-emerald-600"
-          : state === "incorrect"
-            ? "rounded-sm bg-red-100 text-red-600 underline decoration-red-400"
-            : "text-slate-400";
-
+      const isTyped = index < typedText.length;
+      const isCorrect = typedText[index] === character;
       const isCursor = index === typedText.length && status !== "completed";
+
+      let colorClass = "text-slate-500";
+
+      if (textHighlight && isTyped) {
+        colorClass = isCorrect
+          ? "text-emerald-600"
+          : "rounded-sm bg-red-100 text-red-600 underline decoration-red-400";
+      } else if (!textHighlight && isTyped) {
+        colorClass = "text-slate-800";
+      } else if (!isTyped) {
+        colorClass = "text-slate-400";
+      }
+
+      // With highlighting off, show the actual character the user typed.
+      const displayedCharacter =
+        !textHighlight && isTyped ? typedText[index] : character;
 
       return (
         <span
           key={index}
-          className={`${colorClass} ${isCursor ? "border-l-2 border-blue-500" : ""}`}
+          className={`${colorClass} ${
+            isCursor ? "border-l-2 border-blue-500" : ""
+          }`}
         >
-          {character === " " ? "\u00A0" : character}
+          {displayedCharacter === " " ? "\u00A0" : displayedCharacter}
         </span>
       );
     });
@@ -186,7 +192,7 @@ export default function TypingTestPage() {
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6 pb-10">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <button
             type="button"
@@ -215,9 +221,9 @@ export default function TypingTestPage() {
           <RotateCcw size={16} />
           Restart test
         </button>
-      </div>
+      </header>
 
-      {/* Live statistics */}
+      {/* Live statistics — no passage progress bar */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard
           label="Words per minute"
@@ -225,18 +231,21 @@ export default function TypingTestPage() {
           icon={<Zap size={18} />}
           accent="blue"
         />
+
         <MetricCard
           label="Accuracy"
           value={`${accuracy}%`}
           icon={<Target size={18} />}
           accent="green"
         />
+
         <MetricCard
           label="Errors"
           value={String(errors)}
           icon={<Keyboard size={18} />}
           accent="red"
         />
+
         <MetricCard
           label="Time remaining"
           value={formatTime(remainingTime)}
@@ -245,34 +254,10 @@ export default function TypingTestPage() {
         />
       </div>
 
-      {/* Progress */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <span className="text-sm font-semibold text-slate-700">
-            Passage progress
-          </span>
-          <span className="text-sm font-bold text-blue-600">
-            {Math.round(progress)}%
-          </span>
-        </div>
-
-        <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
-          <div
-            className="h-full rounded-full bg-blue-600 transition-[width] duration-200"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
-          <Legend color="bg-emerald-500" label="Correct" />
-          <Legend color="bg-red-500" label="Incorrect" />
-          <Legend color="bg-slate-300" label="Remaining" />
-        </div>
-      </section>
-
       {/* Typing workspace */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        {/* Three toggle buttons */}
+        <div className="flex flex-col gap-4 border-b border-slate-100 px-4 py-4 sm:px-6">
           <div>
             <h2 className="font-bold text-slate-900">{passage.title}</h2>
             <p className="mt-1 text-xs text-slate-500">
@@ -280,25 +265,38 @@ export default function TypingTestPage() {
             </p>
           </div>
 
-          <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
-            <ModeButton
-              active={typingMode === "separate"}
-              onClick={() => setTypingMode("separate")}
-            >
-              Separate
-            </ModeButton>
-            <ModeButton
-              active={typingMode === "overlay"}
-              onClick={() => setTypingMode("overlay")}
+          <div className="flex flex-wrap items-center gap-2">
+            <ToggleButton
+              active={typingLayout === "overlay"}
+              onClick={() => setTypingLayout("overlay")}
+              icon={<Layers size={16} />}
             >
               Overlay
-            </ModeButton>
+            </ToggleButton>
+
+            <ToggleButton
+              active={typingLayout === "horizontal"}
+              onClick={() => setTypingLayout("horizontal")}
+              icon={<Columns2 size={16} />}
+            >
+              Horizontal
+            </ToggleButton>
+
+            <ToggleButton
+              active={textHighlight}
+              onClick={() => setTextHighlight((current) => !current)}
+              icon={<Highlighter size={16} />}
+              ariaPressed={textHighlight}
+            >
+              Text highlight
+            </ToggleButton>
           </div>
         </div>
 
         {status === "completed" ? (
+          /* Results */
           <div className="px-5 py-12 text-center sm:px-8">
-            <div className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+            <div className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
               <Trophy size={30} />
             </div>
 
@@ -308,7 +306,7 @@ export default function TypingTestPage() {
 
             <p className="mt-2 text-sm text-slate-500">
               You practiced “{passage.title}” for{" "}
-              {formatDuration(initialDuration - remainingTime)}.
+              {formatDuration(elapsedSeconds)}.
             </p>
 
             <div className="mx-auto mt-6 grid max-w-lg grid-cols-3 gap-3">
@@ -337,18 +335,55 @@ export default function TypingTestPage() {
             </div>
           </div>
         ) : (
-          <div className="space-y-5 p-4 sm:p-6">
-            {typingMode === "separate" ? (
-              <>
-                <div className="rounded-xl bg-slate-50 p-4 font-mono text-base leading-8 sm:p-6 sm:text-lg sm:leading-9">
+          <div
+            className={`grid items-start gap-5 p-4 sm:p-6 ${
+              typingLayout === "horizontal"
+                ? "grid-cols-1 lg:grid-cols-2"
+                : "grid-cols-1"
+            }`}
+          >
+            {/* Reference passage */}
+            <div>
+              {typingLayout === "horizontal" && (
+                <h3 className="mb-3 text-sm font-semibold text-slate-700">
+                  Reference passage
+                </h3>
+              )}
+
+              {typingLayout === "overlay" ? (
+                <div className="relative">
+                  <div className="pointer-events-none min-h-56 whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-base leading-8 sm:p-6 sm:text-lg sm:leading-9">
+                    {renderCharacters()}
+                  </div>
+
+                  <textarea
+                    ref={inputRef}
+                    value={typedText}
+                    onChange={(event) => handleTyping(event.target.value)}
+                    onPaste={(event) => event.preventDefault()}
+                    aria-label="Type over the reference passage"
+                    rows={7}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    className="absolute inset-0 h-full min-h-56 w-full resize-none rounded-xl bg-transparent p-4 font-mono text-base leading-8 text-transparent caret-blue-600 outline-none selection:bg-blue-200/50 sm:p-6 sm:text-lg sm:leading-9"
+                  />
+                </div>
+              ) : (
+                <div className="min-h-56 whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-base leading-8 sm:p-6 sm:text-lg sm:leading-9">
                   {renderCharacters()}
                 </div>
+              )}
+            </div>
 
+            {/* Separate typing area for horizontal mode */}
+            {typingLayout === "horizontal" && (
+              <div>
                 <label
                   htmlFor="typing-input"
-                  className="block text-sm font-semibold text-slate-700"
+                  className="mb-3 block text-sm font-semibold text-slate-700"
                 >
-                  Type the passage here
+                  Your typing
                 </label>
 
                 <textarea
@@ -357,7 +392,7 @@ export default function TypingTestPage() {
                   value={typedText}
                   onChange={(event) => handleTyping(event.target.value)}
                   onPaste={(event) => event.preventDefault()}
-                  rows={5}
+                  rows={7}
                   spellCheck={false}
                   autoCapitalize="off"
                   autoCorrect="off"
@@ -366,31 +401,16 @@ export default function TypingTestPage() {
                       ? "Start typing to begin the timer..."
                       : "Keep typing..."
                   }
-                  className="w-full resize-y rounded-xl border border-slate-200 px-4 py-4 font-mono text-base leading-8 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
-                />
-              </>
-            ) : (
-              <div className="relative">
-                <div className="pointer-events-none min-h-56 whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-base leading-8 sm:p-6 sm:text-lg sm:leading-9">
-                  {renderCharacters()}
-                </div>
-
-                <textarea
-                  ref={inputRef}
-                  value={typedText}
-                  onChange={(event) => handleTyping(event.target.value)}
-                  onPaste={(event) => event.preventDefault()}
-                  aria-label="Type the displayed passage"
-                  rows={7}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  className="absolute inset-0 h-full min-h-56 w-full resize-none rounded-xl bg-transparent p-4 font-mono text-base leading-8 text-transparent caret-blue-600 outline-none selection:bg-blue-200/50 sm:p-6 sm:text-lg sm:leading-9"
+                  className="min-h-56 w-full resize-y rounded-xl border border-slate-200 bg-white p-4 font-mono text-base leading-8 text-slate-800 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </div>
             )}
 
-            <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className={`flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between ${
+                typingLayout === "horizontal" ? "lg:col-span-2" : ""
+              }`}
+            >
               <p className="text-xs leading-5 text-slate-500">
                 {status === "idle"
                   ? "The timer starts automatically with your first character."
@@ -410,11 +430,12 @@ export default function TypingTestPage() {
         )}
       </section>
 
-      {/* Quick tips */}
+      {/* Tip */}
       <section className="flex gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-4 sm:p-5">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
           <CheckCircle2 size={20} />
         </div>
+
         <div>
           <h3 className="font-semibold text-slate-900">
             Tip for better results
@@ -453,6 +474,7 @@ function MetricCard({
       >
         {icon}
       </div>
+
       <p className="text-xs text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
         {value}
@@ -461,34 +483,31 @@ function MetricCard({
   );
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className={`size-2 rounded-full ${color}`} />
-      {label}
-    </span>
-  );
-}
-
-function ModeButton({
+function ToggleButton({
   active,
   onClick,
+  icon,
   children,
+  ariaPressed,
 }: {
   active: boolean;
   onClick: () => void;
+  icon: React.ReactNode;
   children: React.ReactNode;
+  ariaPressed?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
+      aria-pressed={ariaPressed ?? active}
+      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
         active
-          ? "bg-white text-blue-700 shadow-sm"
-          : "text-slate-500 hover:text-slate-800"
+          ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+          : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
       }`}
     >
+      {icon}
       {children}
     </button>
   );
