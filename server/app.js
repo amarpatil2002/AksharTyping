@@ -3,6 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import authRoutes from "./src/routes/authRoutes.js";
+import userRoutes from "./src/routes/userRoutes.js";
 
 const app = express();
 
@@ -32,5 +33,6 @@ app.get("/", (req, res) => {
 
 // API routes will be registered here
 app.use("/api/auth", authRoutes);
+app.use("/api/profile", userRoutes);
 
 export default app;

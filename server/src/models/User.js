@@ -7,7 +7,7 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
       minlength: 2,
-      maxlength: 60,
+      maxlength: 80,
     },
     email: {
       type: String,
@@ -17,34 +17,21 @@ const userSchema = new mongoose.Schema(
       trim: true,
       maxlength: 254,
     },
-    password: {
+    // Exclude password hashes from normal queries by default.
+    passwordHash: {
       type: String,
-      required: function () {
-        return this.authProvider === "local";
-      },
+      required: true,
       select: false,
-    },
-    authProvider: {
-      type: String,
-      enum: ["local", "google"],
-      default: "local",
-    },
-    googleId: {
-      type: String,
-      sparse: true,
-      unique: true,
-    },
-    emailVerified: {
-      type: Boolean,
-      default: false,
     },
     role: {
       type: String,
-      enum: ["user", "admin"],
-      default: "user",
+      enum: ["student", "admin"],
+      default: "student",
     },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
-export const User = mongoose.model("User", userSchema);
+const User = mongoose.model("User", userSchema);
+
+export default User;
