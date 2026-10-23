@@ -1,55 +1,53 @@
-# Akshar AI backend — JavaScript + server-side sessions
+# Akshar AI future-ready backend (JavaScript)
 
-## Requirements
-- Node.js 20+
-- MongoDB running locally or a MongoDB Atlas database
+## Architecture
+- One Express API serves both student/client and admin frontends.
+- `User` stores profile, role, status, and optional password hash.
+- `AuthIdentity` links a user to a login provider (`password`, future `google`).
+- `connect-mongo` stores server-side sessions.
+- Student/admin access is enforced by backend middleware, not only React routes.
 
-## Install
-```bash
-npm install
-```
+## Setup
+1. Use Node.js 20+ and have MongoDB running locally or use MongoDB Atlas.
+2. Run `npm install`.
+3. Copy `.env.example` to `.env`.
+4. Generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and set it as `SESSION_SECRET`.
+5. Run `npm run dev`.
 
-Copy `.env.example` to `.env`. Generate a strong secret:
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-Paste the generated value into `SESSION_SECRET`.
-
-## Run
-```bash
-npm run dev
-```
-API: `http://localhost:5000`
-Health check: `GET /api/v1/health`
-
-## Auth endpoints
-- `POST /api/v1/auth/register` body `{ "name": "Student", "email": "student@example.com", "password": "your-password" }`
-- `POST /api/v1/auth/login` body `{ "email": "student@example.com", "password": "your-password" }`
+## API
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
 - `POST /api/v1/auth/logout`
+- `GET /api/v1/student/dashboard` (student role)
+- `GET /api/v1/admin/dashboard` (admin role)
+- `GET /api/v1/health`
 
-Registration does not automatically log in the user.
-
-## Frontend Axios
+## Frontend
 Set frontend `.env`:
-```env
-VITE_API_URL=http://localhost:5000
-```
-Axios:
+`VITE_API_URL=http://localhost:5000`
+
+Axios instance:
 ```js
 import axios from "axios";
-
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
-  withCredentials: true,
+  withCredentials: true
 });
 ```
 
-## Security notes
-- MongoDB stores sessions through `connect-mongo`; this does not use Express MemoryStore.
-- Keep `.env` out of Git.
-- Use HTTPS in production and configure proxy trust and secure cookies correctly if deployed behind a reverse proxy.
-- `HttpOnly` prevents JavaScript from reading the cookie but does not by itself prevent CSRF. Review CSRF protection and SameSite settings for your deployment.
-- Add rate limiting to login and registration before public launch.
-- Never allow users to set their own role to admin.
-- Protect each private API endpoint with server-side authentication and authorization. Frontend route guards alone do not secure API data.
+## Google login later
+Google login is prepared structurally, not yet active. When implementing it:
+1. Use a maintained OAuth/OIDC library and configure Google client ID, secret, callback URL.
+2. Validate OAuth state and the returned identity; require verified email as appropriate.
+3. Find or create a `User` and create an `AuthIdentity` with `provider: "google"` and Google's stable `sub` as `providerUserId`.
+4. Do not blindly link Google to an existing account based only on an unverified email.
+5. Regenerate the session after successful OAuth and set `req.session.userId`.
+6. Redirect to the correct frontend route using a server-controlled allowlist.
+
+## Security before production
+- Configure HTTPS, trusted proxy settings, secure cookie settings, CORS origins, and CSRF protections for your actual deployment.
+- Never let a client choose its own `role`; new users always get `student`.
+- Create/promote admin accounts through a trusted seed script or controlled manual operation.
+- Add email verification, password reset, audit logs, and monitoring as needed.
+- Review rate limits for your real traffic and shared-IP environments.

@@ -9,28 +9,50 @@ const userSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 80,
     },
+
     email: {
       type: String,
       required: true,
-      unique: true,
       lowercase: true,
       trim: true,
       maxlength: 254,
     },
-    // Exclude password hashes from normal queries by default.
-    passwordHash: {
-      type: String,
-      required: true,
-      select: false,
+
+    emailVerified: {
+      type: Boolean,
+      default: false,
     },
+
+    avatarUrl: {
+      type: String,
+      default: null,
+    },
+
     role: {
       type: String,
-      enum: ["student", "admin"],
-      default: "student",
+      enum: ["user", "admin"],
+      default: "user",
+      required: true,
+    },
+
+    status: {
+      type: String,
+      enum: ["active", "suspended", "pending"],
+      default: "active",
+      required: true,
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  },
 );
+
+userSchema.index({ email: 1 }, { unique: true });
 
 const User = mongoose.model("User", userSchema);
 

@@ -1,66 +1,61 @@
 import express from "express";
 import cors from "cors";
-import session from "express-session";
-import MongoStore from "connect-mongo";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
 
-import authRoutes from "./routes/auth.routes.js";
+import authRoutes from "./modules/auth/auth.routes.js";
+// import studentRoutes from "./modules/student/student.routes.js";
+// import adminRoutes from "./modules/admin/admin.routes.js";
+
 import { errorHandler } from "./middleware/errorHandler.js";
+import { apiLimiter } from "./middleware/rateLimiters.js";
 
 const app = express();
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-const MONGODB_URI = process.env.MONGODB_URI;
-const SESSION_SECRET = process.env.SESSION_SECRET;
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
 
-if (!MONGODB_URI) {
-  throw new Error("MONGODB_URI is missing. Add it to your .env file.");
+const adminFrontendUrl = process.env.ADMIN_FRONTEND_URL || frontendUrl;
+
+if (!process.env.MONGODB_URI) {
+  throw new Error("MONGODB_URI is missing from .env.");
 }
 
-if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
-  throw new Error("SESSION_SECRET must be set to a long random secret (at least 32 characters).");
+if (!process.env.JWT_ACCESS_SECRET) {
+  throw new Error("JWT_ACCESS_SECRET is missing from .env.");
 }
 
 const isProduction = process.env.NODE_ENV === "production";
-const maxAgeDays = Number(process.env.SESSION_MAX_AGE_DAYS || 7);
+
+// Only enable this when deployed behind a correctly configured,
+// trusted reverse proxy. Adjust the value for your hosting setup.
+// app.set("trust proxy", 1);
+
+app.use(helmet());
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: [frontendUrl, adminFrontendUrl],
     credentials: true,
-  })
+  }),
 );
 
 app.use(express.json({ limit: "20kb" }));
+app.use(cookieParser());
 
-app.use(
-  session({
-    name: "akshar.sid",
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: MONGODB_URI,
-      collectionName: "sessions",
-      ttl: maxAgeDays * 24 * 60 * 60,
-    }),
-    cookie: {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: "lax",
-      maxAge: maxAgeDays * 24 * 60 * 60 * 1000,
-    },
-  })
-);
-
-app.get("/api/v1/health", (req, res) => {
-  res.status(200).json({ status: "ok" });
+app.get("/api/v1/health", (_req, res) => {
+  res.json({ status: "ok" });
 });
+
+app.use("/api/v1", apiLimiter);
 
 app.use("/api/v1/auth", authRoutes);
 
-app.use((req, res) => {
-  res.status(404).json({ message: "Route not found." });
-});
+app.use((_req, res) =>
+  res.status(404).json({
+    success: false,
+    message: "Route not found.",
+  }),
+);
 
 app.use(errorHandler);
 
