@@ -2,54 +2,86 @@ import {
   createContext,
   useCallback,
   useEffect,
-  useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+
+import { refreshAccessToken, setAccessToken } from "../../../shared/api/axios";
+
 import { authService } from "../services/authService";
+
 import type {
+  AuthContextValue,
   AuthStatus,
   AuthUser,
   LoginPayload,
   RegisterPayload,
+  RequestOtpPayload,
+  VerifyOtpPayload,
 } from "../types/auth.types";
-
-interface AuthContextValue {
-  status: AuthStatus;
-  user: AuthUser | null;
-  login: (payload: LoginPayload) => Promise<void>;
-  register: (payload: RegisterPayload) => Promise<void>;
-  logout: () => Promise<void>;
-  refreshSession: () => Promise<void>;
-}
 
 export const AuthContext = createContext<AuthContextValue | undefined>(
   undefined,
 );
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<AuthStatus>("loading");
-  const [user, setUser] = useState<AuthUser | null>(null);
+interface AuthProviderProps {
+  children: ReactNode;
+}
 
-  const refreshSession = useCallback(async () => {
-    try {
-      const response = await authService.refresh();
-      setUser(response.user);
-      setStatus("authenticated");
-    } catch {
-      setUser(null);
-      setStatus("unauthenticated");
-    }
-  }, []);
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [status, setStatus] = useState<AuthStatus>("loading");
+
+  // Inside AuthProvider:
+  const sessionGeneration = useRef(0);
 
   useEffect(() => {
-    void refreshSession();
-  }, [refreshSession]);
+    let cancelled = false;
+    const generation = sessionGeneration.current;
+
+    async function restoreSession() {
+      try {
+        await refreshAccessToken();
+
+        if (cancelled || generation !== sessionGeneration.current) return;
+
+        const currentUser = await authService.getCurrentUser();
+
+        if (cancelled || generation !== sessionGeneration.current) return;
+
+        setUser(currentUser);
+        setStatus("authenticated");
+      } catch {
+        if (cancelled || generation !== sessionGeneration.current) return;
+
+        setAccessToken(null);
+        setUser(null);
+        setStatus("unauthenticated");
+      }
+    }
+
+    restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = useCallback(async (payload: LoginPayload) => {
-    const response = await authService.login(payload);
-    setUser(response.user);
+    const result = await authService.login(payload);
+
+    setAccessToken(result.accessToken);
+    setUser(result.user);
     setStatus("authenticated");
+  }, []);
+
+  const requestOtp = useCallback(async (payload: RequestOtpPayload) => {
+    await authService.requestOtp(payload);
+  }, []);
+
+  const verifyOtp = useCallback(async (payload: VerifyOtpPayload) => {
+    await authService.verifyOtp(payload);
   }, []);
 
   const register = useCallback(async (payload: RegisterPayload) => {
@@ -58,17 +90,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
+      // Send logout request first.
       await authService.logout();
     } finally {
+      // Clear local authentication state after the request.
+      setAccessToken(null);
       setUser(null);
       setStatus("unauthenticated");
     }
   }, []);
 
-  const value = useMemo(
-    () => ({ status, user, login, register, logout, refreshSession }),
-    [status, user, login, register, logout, refreshSession],
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        status,
+        login,
+        logout,
+        requestOtp,
+        verifyOtp,
+        register,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

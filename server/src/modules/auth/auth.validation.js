@@ -49,8 +49,13 @@ export const loginSchema = z.object({
 });
 
 // Request password reset
-export const requestPasswordResetSchema = z.object({
-  email: emailSchema,
+export const requestOtpSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .email()
+    .transform((value) => value.toLowerCase()),
+  purpose: z.enum(["verify_email", "password_reset"]),
 });
 
 // Reset password using OTP

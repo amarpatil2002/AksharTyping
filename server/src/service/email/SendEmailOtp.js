@@ -25,6 +25,14 @@ function getTransporter() {
         user: SMTP_USER,
         pass: SMTP_PASS,
       },
+
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
     });
   }
 

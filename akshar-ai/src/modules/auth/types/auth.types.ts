@@ -1,11 +1,15 @@
-export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
-
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
   emailVerified: boolean;
-  roles: string[];
+  role: string;
+}
+
+export interface ApiResponse<T> {
+  success: boolean;
+  message: string;
+  data: T;
 }
 
 export interface LoginPayload {
@@ -19,10 +23,33 @@ export interface RegisterPayload {
   password: string;
 }
 
-export interface AuthResponse {
+export interface RequestOtpPayload {
+  email: string;
+  purpose: "verify_email" | "password_reset";
+}
+
+export interface VerifyOtpPayload {
+  email: string;
+  otp: string;
+}
+
+export interface LoginResponse {
+  accessToken: string;
+  tokenType: "Bearer";
+  expiresIn: number;
   user: AuthUser;
 }
 
-export interface ApiMessage {
-  message: string;
+export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
+
+export interface AuthContextValue {
+  user: AuthUser | null;
+  status: AuthStatus;
+
+  login: (payload: LoginPayload) => Promise<void>;
+  logout: () => Promise<void>;
+
+  requestOtp: (payload: RequestOtpPayload) => Promise<void>;
+  verifyOtp: (payload: VerifyOtpPayload) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<void>;
 }

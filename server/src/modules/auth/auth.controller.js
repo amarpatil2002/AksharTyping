@@ -8,7 +8,7 @@ import AuthIdentity from "../../models/AuthIdentity.js";
 import RefreshToken from "../../models/RefreshToken.js";
 
 import { normalizeEmail } from "./auth.validation.js";
-import { sendOtpEmail } from "./email.service.js";
+import { sendOtpEmail } from "../../service/email/SendEmailOtp.js";
 import EmailVerification from "../../models/Emailverification.js";
 
 const OTP_EXPIRY_MS = 5 * 60 * 1000;
@@ -17,6 +17,7 @@ const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 export async function requestOtp(req, res, next) {
   try {
     const email = normalizeEmail(req.validatedBody.email);
+    const purpose = req.validatedBody.purpose || "verify_email";
 
     const respond = () =>
       res.status(202).json({
@@ -28,17 +29,45 @@ export async function requestOtp(req, res, next) {
         },
       });
 
-    const existingUser = await User.findOne({ email });
+    // Only allow supported OTP purposes.
+    if (!["verify_email", "password_reset"].includes(purpose)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP purpose.",
+      });
+    }
 
-    if (existingUser?.emailVerified) {
+    const user = await User.findOne({ email });
+
+    // Signup verification: do not send OTP if already verified.
+    if (purpose === "verify_email" && user?.emailVerified) {
       return respond();
     }
 
-    const cooldownStart = new Date(Date.now() - OTP_RESEND_COOLDOWN_MS);
+    // Password reset: only existing, verified, active users qualify.
+    if (purpose === "password_reset") {
+      if (!user || !user.emailVerified || user.status !== "active") {
+        return respond();
+      }
 
+      // Only allow password reset for accounts with password login.
+      const passwordIdentity = await AuthIdentity.exists({
+        userId: user._id,
+        provider: "password",
+      });
+
+      if (!passwordIdentity) {
+        return respond();
+      }
+    }
+
+    const now = new Date();
+    const cooldownStart = new Date(now.getTime() - OTP_RESEND_COOLDOWN_MS);
+
+    // Apply the cooldown separately to each OTP purpose.
     const recentChallenge = await OtpChallenge.exists({
       email,
-      purpose: "verify_email",
+      purpose,
       createdAt: { $gt: cooldownStart },
     });
 
@@ -46,23 +75,28 @@ export async function requestOtp(req, res, next) {
       return respond();
     }
 
+    // Generate a six-digit OTP.
     const otp = String(randomInt(100000, 1000000));
     const codeHash = await bcrypt.hash(otp, 12);
 
+    // Invalidate previous unused OTPs for this purpose only.
     await OtpChallenge.updateMany(
       {
         email,
-        purpose: "verify_email",
+        purpose,
         consumedAt: null,
       },
-      { $set: { consumedAt: new Date() } },
+      {
+        $set: { consumedAt: now },
+      },
     );
 
+    // Store only the hash, never the plaintext OTP.
     await OtpChallenge.create({
       email,
-      purpose: "verify_email",
+      purpose,
       codeHash,
-      expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
+      expiresAt: new Date(now.getTime() + OTP_EXPIRY_MS),
       attempts: 0,
       consumedAt: null,
     });
@@ -71,16 +105,19 @@ export async function requestOtp(req, res, next) {
       await sendOtpEmail({
         email,
         otp,
-        purpose: "verify_email",
+        purpose,
       });
     } catch (error) {
+      // Invalidate the challenge if sending the email fails.
       await OtpChallenge.updateMany(
         {
           email,
-          purpose: "verify_email",
+          purpose,
           consumedAt: null,
         },
-        { $set: { consumedAt: new Date() } },
+        {
+          $set: { consumedAt: new Date() },
+        },
       );
 
       throw error;
@@ -183,6 +220,9 @@ export async function register(req, res, next) {
     const { name, password } = req.validatedBody;
     const email = normalizeEmail(req.validatedBody.email);
 
+    // Never log passwords or other credentials.
+    console.log("Registering user:", { email, name });
+
     // 1. Require successful, unexpired email verification.
     const verification = await EmailVerification.findOne({
       email,
@@ -196,29 +236,42 @@ export async function register(req, res, next) {
       });
     }
 
-    // 2. Check whether an account already exists.
-    const existingUser = await User.findOne({ email });
+    // 2. Check whether a user already exists.
+    const existingUser = await User.findOne({ email }).lean();
 
     if (existingUser) {
       return res.status(409).json({
         success: false,
-        message: "An account with this email already exists.",
+        message: "An account with this email already exists. Please log in.",
       });
     }
 
-    // 3. Hash the password. Never store a plain-text password.
+    // 3. Check whether a password identity already exists.
+    const existingIdentity = await AuthIdentity.findOne({
+      provider: "password",
+      providerUserId: email,
+    }).lean();
+
+    if (existingIdentity) {
+      return res.status(409).json({
+        success: false,
+        message: "An account with this email already exists. Please log in.",
+      });
+    }
+
+    // 4. Hash the password.
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // 4. Create the user account.
+    // 5. Create the user.
     const user = await User.create({
       name: name.trim(),
       email,
       emailVerified: true,
-      role: "user",
+      role: "user", // Ensure this matches your User schema.
       status: "active",
     });
 
-    // 5. Create the password authentication identity.
+    // 6. Create the password identity.
     try {
       await AuthIdentity.create({
         userId: user._id,
@@ -228,13 +281,15 @@ export async function register(req, res, next) {
         passwordHash,
       });
     } catch (error) {
-      // Compensate if identity creation fails.
+      // Roll back the user if identity creation fails.
       await User.deleteOne({ _id: user._id });
       throw error;
     }
 
-    // 6. Remove verification proof so it cannot be reused.
-    await EmailVerification.deleteOne({ _id: verification._id });
+    // 7. Consume the email verification record.
+    await EmailVerification.deleteOne({
+      _id: verification._id,
+    });
 
     return res.status(201).json({
       success: true,
@@ -250,14 +305,15 @@ export async function register(req, res, next) {
       },
     });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error?.code === 11000) {
+      // Do not expose raw database errors or index details.
       return res.status(409).json({
         success: false,
-        message: "An account with this email already exists.",
+        message: "An account with this email already exists. Please log in.",
       });
     }
 
-    next(error);
+    return next(error);
   }
 }
 
@@ -485,32 +541,27 @@ export async function refreshToken(req, res, next) {
   }
 }
 
-export async function logout(req, res, next) {
+export const logout = async (req, res, next) => {
   try {
     const cookieName = process.env.REFRESH_TOKEN_COOKIE_NAME || "refreshToken";
 
-    const rawRefreshToken = req.cookies?.[cookieName];
+    const rawToken = req.cookies?.[cookieName];
 
-    // Revoke the refresh token if a cookie was provided.
-    if (
-      typeof rawRefreshToken === "string" &&
-      /^[a-f0-9]{128}$/i.test(rawRefreshToken)
-    ) {
-      const tokenHash = hashToken(rawRefreshToken);
+    if (rawToken) {
+      const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
       await RefreshToken.updateOne(
-        {
-          tokenHash,
-          revokedAt: null,
-        },
-        {
-          $set: { revokedAt: new Date() },
-        },
+        { tokenHash, revokedAt: null },
+        { $set: { revokedAt: new Date() } },
       );
     }
 
-    // Clear the browser cookie, even if it is missing or invalid.
-    clearRefreshCookie(res);
+    res.clearCookie(cookieName, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/api/v1/auth",
+    });
 
     return res.status(200).json({
       success: true,
@@ -519,7 +570,7 @@ export async function logout(req, res, next) {
   } catch (error) {
     next(error);
   }
-}
+};
 
 export async function requestPasswordReset(req, res, next) {}
 

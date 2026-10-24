@@ -1,52 +1,62 @@
-import { api } from "../../../shared/api/axios";
+import { api, getAccessToken, plainApi } from "../../../shared/api/axios";
+
 import type {
+  ApiResponse,
   AuthUser,
   LoginPayload,
+  LoginResponse,
   RegisterPayload,
+  RequestOtpPayload,
+  VerifyOtpPayload,
 } from "../types/auth.types";
 
-type AuthResponse = {
-  user: AuthUser;
-};
-
-type MessageResponse = {
-  message: string;
-};
-
 export const authService = {
-  login: async (payload: LoginPayload): Promise<AuthResponse> => {
-    const response = await api.post<AuthResponse>(
+  async requestOtp(payload: RequestOtpPayload) {
+    const response = await plainApi.post("/api/v1/auth/request-otp", payload);
+
+    return response.data;
+  },
+
+  async verifyOtp(payload: VerifyOtpPayload) {
+    const response = await plainApi.post("/api/v1/auth/verify-otp", payload);
+
+    return response.data;
+  },
+
+  async register(payload: RegisterPayload) {
+    const response = await plainApi.post("/api/v1/auth/register", payload);
+
+    return response.data;
+  },
+
+  async login(payload: LoginPayload) {
+    const response = await plainApi.post<ApiResponse<LoginResponse>>(
       "/api/v1/auth/login",
       payload,
     );
 
-    return response.data;
+    return response.data.data;
   },
 
-  register: async (payload: RegisterPayload): Promise<MessageResponse> => {
-    const response = await api.post<MessageResponse>(
-      "/api/v1/auth/register",
-      payload,
-    );
+  async refresh() {
+    const response = await plainApi.post<
+      ApiResponse<{
+        accessToken: string;
+        tokenType: "Bearer";
+        expiresIn: number;
+      }>
+    >("/api/v1/auth/refresh");
 
-    return response.data;
+    return response.data.data;
   },
 
-  refresh: async (): Promise<AuthResponse> => {
-    const response = await api.post<AuthResponse>("/api/v1/auth/refresh");
+  async getCurrentUser() {
+    const response = await api.get<ApiResponse<AuthUser>>("/api/v1/auth/me");
 
-    return response.data;
+    return response.data.data;
   },
 
-  me: async (): Promise<AuthResponse> => {
-    const response = await api.get<AuthResponse>("/api/v1/auth/me");
-
-    return response.data;
-  },
-
-  logout: async (): Promise<MessageResponse> => {
-    const response = await api.post<MessageResponse>("/api/v1/auth/logout");
-
-    return response.data;
+  async logout() {
+    await plainApi.post("/api/v1/auth/logout");
   },
 };

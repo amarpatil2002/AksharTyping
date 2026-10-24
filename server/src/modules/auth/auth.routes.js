@@ -14,12 +14,11 @@ import {
 
 import {
   verifyOtpSchema,
-  requestPasswordResetSchema,
   resetPasswordSchema,
   changePasswordSchema,
   registerSchema,
   loginSchema,
-  requestOtpVerificationSchema,
+  requestOtpSchema,
 } from "./auth.validation.js";
 
 import { validateRequest } from "../../middleware/validateRequest.js";
@@ -32,7 +31,7 @@ const router = Router();
 router.post(
   "/request-otp",
   authLimiter,
-  validateRequest(requestOtpVerificationSchema),
+  validateRequest(requestOtpSchema),
   requestOtp,
 );
 
@@ -61,7 +60,7 @@ router.post("/logout", verifyToken, logout);
 router.post(
   "/password/forgot",
   authLimiter,
-  validateRequest(requestPasswordResetSchema),
+  validateRequest(requestOtpSchema),
   requestPasswordReset,
 );
 
@@ -80,6 +79,13 @@ router.post(
   validateRequest(changePasswordSchema),
   changePassword,
 );
+
+router.get("/me", verifyToken, (req, res) => {
+  res.json({
+    success: true,
+    data: req.user,
+  });
+});
 
 // Google OAuth routes can be added here later.
 
