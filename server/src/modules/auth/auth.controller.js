@@ -39,18 +39,20 @@ export async function requestOtp(req, res, next) {
 
     const user = await User.findOne({ email });
 
-    // Signup verification: do not send OTP if already verified.
+    // Signup verification: explicitly reject already registered emails.
     if (purpose === "verify_email" && user?.emailVerified) {
-      return respond();
+      return res.status(409).json({
+        success: false,
+        message: "Email is already registered.",
+      });
     }
 
-    // Password reset: only existing, verified, active users qualify.
+    // Password reset: keep responses generic to prevent email enumeration.
     if (purpose === "password_reset") {
       if (!user || !user.emailVerified || user.status !== "active") {
         return respond();
       }
 
-      // Only allow password reset for accounts with password login.
       const passwordIdentity = await AuthIdentity.exists({
         userId: user._id,
         provider: "password",
@@ -64,7 +66,6 @@ export async function requestOtp(req, res, next) {
     const now = new Date();
     const cooldownStart = new Date(now.getTime() - OTP_RESEND_COOLDOWN_MS);
 
-    // Apply the cooldown separately to each OTP purpose.
     const recentChallenge = await OtpChallenge.exists({
       email,
       purpose,
@@ -75,11 +76,9 @@ export async function requestOtp(req, res, next) {
       return respond();
     }
 
-    // Generate a six-digit OTP.
     const otp = String(randomInt(100000, 1000000));
     const codeHash = await bcrypt.hash(otp, 12);
 
-    // Invalidate previous unused OTPs for this purpose only.
     await OtpChallenge.updateMany(
       {
         email,
@@ -91,7 +90,6 @@ export async function requestOtp(req, res, next) {
       },
     );
 
-    // Store only the hash, never the plaintext OTP.
     await OtpChallenge.create({
       email,
       purpose,
@@ -108,7 +106,6 @@ export async function requestOtp(req, res, next) {
         purpose,
       });
     } catch (error) {
-      // Invalidate the challenge if sending the email fails.
       await OtpChallenge.updateMany(
         {
           email,
@@ -136,11 +133,18 @@ export async function verifyOtp(req, res, next) {
   try {
     const email = normalizeEmail(req.validatedBody.email);
     const { otp } = req.validatedBody;
+    const purpose = req.validatedBody.purpose || "verify_email";
 
-    // Find the latest unconsumed, unexpired OTP.
+    if (!["verify_email", "password_reset"].includes(purpose)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP purpose.",
+      });
+    }
+
     const challenge = await OtpChallenge.findOne({
       email,
-      purpose: "verify_email",
+      purpose,
       consumedAt: null,
       expiresAt: { $gt: new Date() },
     })
@@ -154,7 +158,6 @@ export async function verifyOtp(req, res, next) {
       });
     }
 
-    // Enforce the maximum verification attempts.
     if (challenge.attempts >= OTP_MAX_ATTEMPTS) {
       challenge.consumedAt = new Date();
       await challenge.save();
@@ -184,30 +187,55 @@ export async function verifyOtp(req, res, next) {
 
     // Consume the OTP so it cannot be reused.
     challenge.consumedAt = new Date();
-    await challenge.save();
 
-    // Store server-side proof that this email was verified.
-    await EmailVerification.findOneAndUpdate(
-      { email },
-      {
-        $set: {
-          verifiedAt: new Date(),
-          expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+    if (purpose === "verify_email") {
+      await challenge.save();
+
+      await EmailVerification.findOneAndUpdate(
+        { email },
+        {
+          $set: {
+            verifiedAt: new Date(),
+            expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+          },
         },
-      },
-      {
-        upsert: true,
-        new: true,
-        runValidators: true,
-      },
-    );
+        {
+          upsert: true,
+          new: true,
+          runValidators: true,
+        },
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Email verified successfully. You can now register.",
+        data: {
+          email,
+          purpose,
+          expiresIn: VERIFICATION_TTL_MS / 1000,
+        },
+      });
+    }
+
+    // Password reset: store a hashed, short-lived token on this challenge.
+    const resetToken = randomBytes(32).toString("hex");
+
+    challenge.resetTokenHash = createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+
+    challenge.resetTokenExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await challenge.save();
 
     return res.status(200).json({
       success: true,
-      message: "Email verified successfully. You can now register.",
+      message: "Verification successful. You can now reset your password.",
       data: {
         email,
-        expiresIn: VERIFICATION_TTL_MS / 1000,
+        purpose,
+        resetToken,
+        expiresIn: 600,
       },
     });
   } catch (error) {
@@ -219,9 +247,6 @@ export async function register(req, res, next) {
   try {
     const { name, password } = req.validatedBody;
     const email = normalizeEmail(req.validatedBody.email);
-
-    // Never log passwords or other credentials.
-    console.log("Registering user:", { email, name });
 
     // 1. Require successful, unexpired email verification.
     const verification = await EmailVerification.findOne({
@@ -572,8 +597,116 @@ export const logout = async (req, res, next) => {
   }
 };
 
-export async function requestPasswordReset(req, res, next) {}
+export async function resetPassword(req, res, next) {
+  try {
+    const { resetToken, newPassword } = req.validatedBody;
 
-export async function resetPassword(req, res, next) {}
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset token and new password are required.",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must contain at least 8 characters.",
+      });
+    }
+
+    const tokenHash = createHash("sha256").update(resetToken).digest("hex");
+
+    const now = new Date();
+
+    // Find a verified, unused password-reset authorization.
+    const challenge = await OtpChallenge.findOne({
+      purpose: "password_reset",
+      consumedAt: { $ne: null },
+      resetTokenHash: tokenHash,
+      resetTokenExpiresAt: { $gt: now },
+    }).select("+resetTokenHash");
+
+    if (!challenge) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired password-reset token.",
+      });
+    }
+
+    // Find the existing user.
+    const user = await User.findOne({
+      email: challenge.email,
+      emailVerified: true,
+      status: "active",
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to reset password for this account.",
+      });
+    }
+
+    // Hash the new password using the same algorithm as registration.
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update the existing password identity.
+    const identity = await AuthIdentity.findOneAndUpdate(
+      {
+        userId: user._id,
+        provider: "password",
+      },
+      {
+        $set: { passwordHash },
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+
+    console.log(identity);
+
+    if (!identity) {
+      return res.status(400).json({
+        success: false,
+        message: "Password login is not configured for this account.",
+      });
+    }
+
+    // Consume the reset authorization so it cannot be reused.
+    const consumedChallenge = await OtpChallenge.findOneAndUpdate(
+      {
+        _id: challenge._id,
+        purpose: "password_reset",
+        consumedAt: { $ne: null },
+        resetTokenHash: tokenHash,
+        resetTokenExpiresAt: { $gt: new Date() },
+      },
+      {
+        $set: {
+          resetTokenHash: null,
+          resetTokenExpiresAt: null,
+        },
+      },
+      { new: true },
+    );
+
+    if (!consumedChallenge) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset token has expired or already been used.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully. Please log in.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
 
 export async function changePassword(req, res, next) {}

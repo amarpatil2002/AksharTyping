@@ -38,7 +38,18 @@ const otpChallengeSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    resetTokenHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    resetTokenExpiresAt: {
+      type: Date,
+      default: null,
+    },
   },
+
   {
     timestamps: true,
     versionKey: false,

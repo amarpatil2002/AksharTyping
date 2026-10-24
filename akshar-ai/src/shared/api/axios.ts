@@ -66,9 +66,6 @@ export function refreshAccessToken(): Promise<string> {
 // Attach the current access token to API requests.
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
-
-  console.log("Request:", config.url, "Has access token:", Boolean(token));
-
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

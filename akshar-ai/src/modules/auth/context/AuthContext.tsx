@@ -18,6 +18,7 @@ import type {
   LoginPayload,
   RegisterPayload,
   RequestOtpPayload,
+  ResetPasswordPayload,
   VerifyOtpPayload,
 } from "../types/auth.types";
 
@@ -88,6 +89,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await authService.register(payload);
   }, []);
 
+  const resetPassword = useCallback(async (payload: ResetPasswordPayload) => {
+    await authService.resetPassword(payload);
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       // Send logout request first.
@@ -110,6 +115,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         requestOtp,
         verifyOtp,
         register,
+        resetPassword,
       }}
     >
       {children}

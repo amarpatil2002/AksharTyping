@@ -36,6 +36,7 @@ export const registerSchema = z.object({
 export const verifyOtpSchema = z.object({
   email: emailSchema,
   otp: z.string().regex(/^\d{6}$/, "OTP must contain exactly 6 digits."),
+  purpose: z.enum(["verify_email", "password_reset"]),
 });
 
 // Login with email and password
@@ -60,9 +61,7 @@ export const requestOtpSchema = z.object({
 
 // Reset password using OTP
 export const resetPasswordSchema = z.object({
-  email: emailSchema,
-
-  otp: z.string().regex(/^\d{6}$/, "OTP must contain exactly 6 digits."),
+  resetToken: z.string().min(1, "Reset token is required."),
 
   newPassword: z
     .string()

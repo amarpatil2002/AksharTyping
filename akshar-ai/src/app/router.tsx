@@ -13,6 +13,8 @@ import LoginPage from "../modules/auth/pages/LoginPage";
 import SignupPage from "../modules/auth/pages/SignupPage";
 import DashboardPage from "../modules/dashboard/pages/DashboardPage";
 import NotFoundPage from "../shared/components/NotFoundPage";
+import ForgotPasswordPage from "../modules/auth/pages/ForgotPasswordPage";
+import { ResetPasswordPage } from "../modules/auth/pages/ResetPasswordPage";
 
 // Import admin pages when you create them.
 
@@ -33,12 +35,17 @@ export const router = createBrowserRouter([
     element: <GuestRoute />,
     children: [
       {
-        element: <AuthLayout />,
+        element: <PublicLayout />,
         children: [
           {
             path: "/",
             element: <LandingPage />,
           },
+        ],
+      },
+      {
+        element: <AuthLayout />,
+        children: [
           {
             path: "/login",
             element: <LoginPage />,
@@ -46,6 +53,14 @@ export const router = createBrowserRouter([
           {
             path: "/signup",
             element: <SignupPage />,
+          },
+          {
+            path: "/forgot-password",
+            element: <ForgotPasswordPage />,
+          },
+          {
+            path: "/reset-password",
+            element: <ResetPasswordPage />,
           },
         ],
       },

@@ -1,4 +1,4 @@
-import { api, getAccessToken, plainApi } from "../../../shared/api/axios";
+import { api, plainApi } from "../../../shared/api/axios";
 
 import type {
   ApiResponse,
@@ -7,6 +7,7 @@ import type {
   LoginResponse,
   RegisterPayload,
   RequestOtpPayload,
+  ResetPasswordPayload,
   VerifyOtpPayload,
 } from "../types/auth.types";
 
@@ -36,6 +37,15 @@ export const authService = {
     );
 
     return response.data.data;
+  },
+
+  async resetPassword(payload: ResetPasswordPayload) {
+    const response = await plainApi.post(
+      "/api/v1/auth/reset-password",
+      payload,
+    );
+
+    return response.data;
   },
 
   async refresh() {

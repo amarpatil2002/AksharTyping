@@ -4,7 +4,6 @@ import {
   requestOtp,
   verifyOtp,
   logout,
-  requestPasswordReset,
   resetPassword,
   changePassword,
   refreshToken,
@@ -54,18 +53,10 @@ router.post("/login", authLimiter, validateRequest(loginSchema), login);
 router.post("/refresh", authLimiter, refreshToken);
 
 // Logout
-router.post("/logout", verifyToken, logout);
-
-// Password reset using email OTP
-router.post(
-  "/password/forgot",
-  authLimiter,
-  validateRequest(requestOtpSchema),
-  requestPasswordReset,
-);
+router.post("/logout", logout);
 
 router.post(
-  "/password/reset",
+  "/reset-password",
   authLimiter,
   validateRequest(resetPasswordSchema),
   resetPassword,

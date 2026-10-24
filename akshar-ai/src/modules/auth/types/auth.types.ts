@@ -33,6 +33,11 @@ export interface VerifyOtpPayload {
   otp: string;
 }
 
+export interface ResetPasswordPayload {
+  resetToken: string;
+  newPassword: string;
+}
+
 export interface LoginResponse {
   accessToken: string;
   tokenType: "Bearer";
@@ -52,4 +57,5 @@ export interface AuthContextValue {
   requestOtp: (payload: RequestOtpPayload) => Promise<void>;
   verifyOtp: (payload: VerifyOtpPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
+  resetPassword: (payload: ResetPasswordPayload) => Promise<void>;
 }
