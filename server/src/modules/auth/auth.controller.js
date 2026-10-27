@@ -342,8 +342,9 @@ export async function register(req, res, next) {
   }
 }
 
-const ACCESS_TOKEN_TTL = "15m";
-const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_EXPIRES_IN || "15m";
+const REFRESH_TOKEN_TTL_MS =
+  process.env.REFRESH_TOKEN_TTL_MS || 7 * 24 * 60 * 60 * 1000;
 
 const refreshCookieOptions = {
   httpOnly: true,

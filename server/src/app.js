@@ -4,8 +4,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import authRoutes from "./modules/auth/auth.routes.js";
-// import studentRoutes from "./modules/student/student.routes.js";
-// import adminRoutes from "./modules/admin/admin.routes.js";
+import typingExamRoutes from "./modules/exams/typing/TypingExam.routes.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
@@ -48,7 +47,9 @@ app.get("/api/v1/health", (_req, res) => {
 
 app.use("/api/v1", apiLimiter);
 
+//admin routes
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/typing-exam", typingExamRoutes);
 
 app.use((_req, res) =>
   res.status(404).json({
