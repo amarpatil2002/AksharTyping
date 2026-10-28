@@ -71,24 +71,21 @@ const requireUserId = (req, res) => {
  * Create a plain, stable copy of a reusable configuration.
  * Database bookkeeping fields are deliberately excluded.
  */
-const getConfigSnapshot = (config) => {
-  const source = plain(config);
-
-  return {
-    name: source.name,
-    description: source.description ?? "",
-    language: source.language,
-    durationSeconds: source.durationSeconds,
-    targetWpm: source.targetWpm ?? 0,
-    instructions: source.instructions ?? [],
-    examMetadata: source.examMetadata ?? {},
-    passageSettings: source.passageSettings ?? {},
-    evaluationRules: source.evaluationRules ?? {},
-    examInterface: source.examInterface ?? {},
-    analyticsSettings: source.analyticsSettings ?? {},
-    version: source.version ?? 1,
-  };
-};
+const getConfigSnapshot = (config) => ({
+  name: config.name,
+  description: config.description,
+  language: config.language,
+  durationSeconds: config.durationSeconds,
+  targetWpm: config.targetWpm,
+  examMetadata: config.examMetadata,
+  passageSettings: config.passageSettings,
+  instructions: config.instructions,
+  evaluationRules: config.evaluationRules,
+  examInterface: config.examInterface,
+  analyticsSettings: config.analyticsSettings,
+  examWorkflow: config.examWorkflow,
+  version: config.version,
+});
 
 /**
  * Create the immutable exam settings copied into a candidate attempt.
@@ -1023,42 +1020,83 @@ const calculateTypingResult = ({
  * Starts a candidate attempt.
  * Requires an authenticated user and a published exam.
  */
+
 export const startTypingAttempt = asyncHandler(async (req, res) => {
   const candidateId = requireUserId(req, res);
   if (!candidateId) return;
 
-  const { id } = req.params;
+  const { examId } = req.body;
 
-  if (!isValidId(id)) {
+  if (!isValidId(examId)) {
     return fail(res, 400, "Invalid exam ID");
   }
 
   const exam = await TypingExam.findOne({
-    _id: id,
+    _id: examId,
     status: "published",
   }).lean();
 
   if (!exam) {
-    return fail(res, 404, "Published exam not found");
+    const exists = await TypingExam.exists({ _id: examId });
+
+    if (!exists) {
+      return fail(res, 404, "Typing exam not found");
+    }
+
+    return fail(res, 409, "This exam is not available for typing");
   }
 
-  const now = new Date();
-  const snapshot = getExamSnapshot(exam);
+  const config = exam.configSnapshot;
+
+  if (!config) {
+    return fail(res, 409, "Published exam configuration snapshot is missing");
+  }
+
+  const durationSeconds = Number(config.durationSeconds);
+
+  if (
+    !Number.isInteger(durationSeconds) ||
+    durationSeconds < 10 ||
+    durationSeconds > 7200
+  ) {
+    return fail(res, 409, "Invalid exam duration configuration");
+  }
+
+  if (!config.language || !config.version || !exam.passageText?.trim()) {
+    return fail(res, 409, "Published exam configuration is incomplete");
+  }
+
+  const startedAt = new Date();
+  const deadlineAt = new Date(startedAt.getTime() + durationSeconds * 1000);
+
+  const examSnapshot = {
+    title: exam.title,
+    language: config.language,
+    passageText: exam.passageText,
+    durationSeconds,
+    targetWpm: config.targetWpm ?? 0,
+    instructions: config.instructions ?? [],
+    examMetadata: config.examMetadata ?? {},
+    passageSettings: config.passageSettings ?? {},
+    evaluationRules: config.evaluationRules ?? {},
+    examInterface: config.examInterface ?? {},
+    analyticsSettings: config.analyticsSettings ?? {},
+    examWorkflow: config.examWorkflow,
+    configVersion: config.version,
+  };
+
+  // Do not delete previous attempts here.
+  // Preserve history and handle unfinished attempts through
+  // an explicit cancellation or abandonment policy.
 
   const attempt = await TypingAttempt.create({
     candidate: candidateId,
     exam: exam._id,
-    examSnapshot: {
-      ...snapshot,
-      title: exam.title,
-      passageText: exam.passageText,
-      configVersion: exam.configVersion,
-    },
+    examSnapshot,
     status: "in_progress",
-    startedAt: now,
-    expiresAt: new Date(
-      now.getTime() + Number(snapshot.durationSeconds) * 1000,
-    ),
+    lastActivityAt: startedAt,
+    startedAt,
+    deadlineAt,
     typedText: "",
     timeline: [],
   });
@@ -1068,19 +1106,12 @@ export const startTypingAttempt = asyncHandler(async (req, res) => {
     "Typing attempt started successfully",
     {
       attemptId: attempt._id,
-      exam: {
-        _id: exam._id,
-        title: exam.title,
-        description: exam.description,
-        language: snapshot.language,
-        passageText: exam.passageText,
-        durationSeconds: snapshot.durationSeconds,
-        targetWpm: snapshot.targetWpm,
-        instructions: snapshot.instructions,
-        examInterface: snapshot.examInterface,
-        startedAt: attempt.startedAt,
-        expiresAt: attempt.expiresAt,
-      },
+      examId: attempt.exam,
+      status: attempt.status,
+      startedAt: attempt.startedAt,
+      deadlineAt: attempt.deadlineAt,
+      durationSeconds,
+      exam: attempt.examSnapshot,
     },
     201,
   );
@@ -1092,6 +1123,7 @@ export const startTypingAttempt = asyncHandler(async (req, res) => {
  * Saves autosave text and optional timeline samples.
  * The validation schema should cap text length and timeline size.
  */
+
 export const saveTypingAttemptTimeline = asyncHandler(async (req, res) => {
   const candidateId = requireUserId(req, res);
   if (!candidateId) return;
@@ -1102,6 +1134,33 @@ export const saveTypingAttemptTimeline = asyncHandler(async (req, res) => {
     return fail(res, 400, "Invalid attempt ID");
   }
 
+  const { typedText, metrics } = req.body;
+
+  // Validate fields accepted by this endpoint.
+  if (
+    typedText !== undefined &&
+    (typeof typedText !== "string" || typedText.length > 100000)
+  ) {
+    return fail(res, 400, "Invalid typed text");
+  }
+
+  if (
+    metrics !== undefined &&
+    (!Array.isArray(metrics) ||
+      metrics.length > 1200 ||
+      metrics.some(
+        (metric) =>
+          !metric ||
+          !Number.isInteger(metric.elapsedSeconds) ||
+          metric.elapsedSeconds < 0,
+      ))
+  ) {
+    return fail(res, 400, "Invalid timeline metrics");
+  }
+
+  const now = new Date();
+
+  // Fetch only an attempt owned by the authenticated candidate.
   const attempt = await TypingAttempt.findOne({
     _id: attemptId,
     candidate: candidateId,
@@ -1115,35 +1174,138 @@ export const saveTypingAttemptTimeline = asyncHandler(async (req, res) => {
     return fail(res, 409, "Attempt is no longer in progress");
   }
 
-  const now = new Date();
+  // The deadline is authoritative and must be enforced server-side.
+  if (!attempt.deadlineAt || now >= attempt.deadlineAt) {
+    await TypingAttempt.updateOne(
+      {
+        _id: attempt._id,
+        candidate: candidateId,
+        status: "in_progress",
+        $or: [
+          { deadlineAt: null },
+          { deadlineAt: { $exists: false } },
+          { deadlineAt: { $lte: now } },
+        ],
+      },
+      {
+        $set: { status: "expired" },
+      },
+    );
 
-  if (attempt.expiresAt && now >= attempt.expiresAt) {
-    return fail(res, 409, "Attempt time has expired. Submit the attempt.");
+    return fail(res, 409, "Attempt time has expired");
   }
 
-  if (typeof req.body.typedText === "string") {
-    attempt.typedText = req.body.typedText;
+  const analyticsSettings = attempt.examSnapshot?.analyticsSettings ?? {};
+
+  // Build an update containing only explicitly supplied fields.
+  const update = {
+    $set: {
+      lastActivityAt: now,
+      lastSavedAt: now,
+    },
+  };
+
+  if (typedText !== undefined) {
+    update.$set.typedText = typedText;
   }
 
-  if (Array.isArray(req.body.timeline) && req.body.timeline.length > 0) {
-    const settings = attempt.examSnapshot?.analyticsSettings ?? {};
+  if (
+    Array.isArray(metrics) &&
+    metrics.length > 0 &&
+    analyticsSettings.storeKeystrokeTimeline !== false
+  ) {
+    // Remove duplicate elapsed-second entries within this request.
+    const metricsBySecond = new Map();
 
-    if (settings.storeKeystrokeTimeline !== false) {
-      const existing = Array.isArray(attempt.timeline) ? attempt.timeline : [];
+    for (const metric of metrics) {
+      metricsBySecond.set(metric.elapsedSeconds, metric);
+    }
 
-      const incoming = req.body.timeline;
+    const incomingMetrics = [...metricsBySecond.values()].sort(
+      (a, b) => a.elapsedSeconds - b.elapsedSeconds,
+    );
 
-      // Keep a bounded timeline to avoid unbounded document growth.
-      attempt.timeline = [...existing, ...incoming].slice(-5000);
+    const existingTimeline = Array.isArray(attempt.timeline)
+      ? attempt.timeline
+      : [];
+
+    const lastElapsedSecond =
+      existingTimeline.length > 0
+        ? Math.max(...existingTimeline.map((metric) => metric.elapsedSeconds))
+        : -1;
+
+    // Ignore metrics already saved by an earlier autosave.
+    const newMetrics = incomingMetrics.filter(
+      (metric) => metric.elapsedSeconds > lastElapsedSecond,
+    );
+
+    if (newMetrics.length > 0) {
+      update.$push = {
+        timeline: {
+          $each: newMetrics,
+          $slice: -5000,
+        },
+      };
     }
   }
 
-  attempt.lastSavedAt = now;
-  await attempt.save();
+  // Conditional update prevents saving if submission, cancellation,
+  // expiration, or another lifecycle transition has already occurred.
+  const updatedAttempt = await TypingAttempt.findOneAndUpdate(
+    {
+      _id: attempt._id,
+      candidate: candidateId,
+      status: "in_progress",
+      deadlineAt: { $gt: now },
+      __v: attempt.__v,
+    },
+    {
+      ...update,
+      $inc: { __v: 1 },
+    },
+    {
+      new: true,
+      runValidators: true,
+      projection: {
+        _id: 1,
+        lastSavedAt: 1,
+        deadlineAt: 1,
+        status: 1,
+      },
+    },
+  ).lean();
+
+  if (!updatedAttempt) {
+    const latestAttempt = await TypingAttempt.findOne({
+      _id: attemptId,
+      candidate: candidateId,
+    })
+      .select("status deadlineAt")
+      .lean();
+
+    if (!latestAttempt) {
+      return fail(res, 404, "Attempt not found");
+    }
+
+    if (latestAttempt.status !== "in_progress") {
+      return fail(res, 409, "Attempt is no longer in progress");
+    }
+
+    if (!latestAttempt.deadlineAt || new Date() >= latestAttempt.deadlineAt) {
+      return fail(res, 409, "Attempt time has expired");
+    }
+
+    return fail(
+      res,
+      409,
+      "Attempt changed during autosave. Retry with the latest state.",
+    );
+  }
 
   return success(res, "Attempt autosaved successfully", {
-    attemptId: attempt._id,
-    lastSavedAt: attempt.lastSavedAt,
+    attemptId: updatedAttempt._id,
+    lastSavedAt: updatedAttempt.lastSavedAt,
+    deadlineAt: updatedAttempt.deadlineAt,
   });
 });
 
@@ -1153,82 +1315,227 @@ export const saveTypingAttemptTimeline = asyncHandler(async (req, res) => {
  * The server computes the result; it never accepts client-supplied
  * WPM, accuracy, error counts, marks or pass/fail values.
  */
+
+const MAX_TYPED_TEXT_LENGTH = 50_000;
+const MAX_SUBMISSION_ID_LENGTH = 128;
+
+const buildTrustedExamDetails = (snapshot) => ({
+  title: snapshot.title,
+  language: snapshot.language,
+  configVersion: snapshot.configVersion,
+  durationSeconds: snapshot.durationSeconds,
+  targetWpm: snapshot.targetWpm ?? null,
+  evaluationRules: snapshot.evaluationRules,
+});
+
+const isSameSubmission = (attempt, submissionId) =>
+  attempt.status === "evaluated" && attempt.submissionId === submissionId;
+
 export const submitTypingAttempt = asyncHandler(async (req, res) => {
   const candidateId = requireUserId(req, res);
   if (!candidateId) return;
 
   const { attemptId } = req.params;
+  const { typedText, submissionId, result: submittedResult } = req.body;
 
   if (!isValidId(attemptId)) {
     return fail(res, 400, "Invalid attempt ID");
   }
 
+  if (
+    typeof typedText !== "string" ||
+    typedText.length > MAX_TYPED_TEXT_LENGTH
+  ) {
+    return fail(res, 400, "Invalid typed text");
+  }
+
+  if (
+    typeof submissionId !== "string" ||
+    !submissionId.trim() ||
+    submissionId.length > MAX_SUBMISSION_ID_LENGTH
+  ) {
+    return fail(res, 400, "Invalid submission ID");
+  }
+
+  if (
+    !submittedResult ||
+    typeof submittedResult !== "object" ||
+    Array.isArray(submittedResult)
+  ) {
+    return fail(res, 400, "A valid typing result is required");
+  }
+
+  const normalizedSubmissionId = submissionId.trim();
+
+  // Load only an attempt owned by this candidate.
   const attempt = await TypingAttempt.findOne({
     _id: attemptId,
     candidate: candidateId,
   });
 
   if (!attempt) {
-    return fail(res, 404, "Attempt not found");
+    return fail(res, 404, "Typing attempt not found");
   }
 
-  if (attempt.status === "submitted" || attempt.status === "evaluated") {
-    return success(res, "Attempt was already submitted", attempt.result);
+  // Idempotency: retrying the same completed submission returns
+  // the saved result instead of creating a second submission.
+  if (attempt.status === "evaluated") {
+    if (isSameSubmission(attempt, normalizedSubmissionId)) {
+      return success(res, "Typing attempt already submitted", {
+        attemptId: attempt._id,
+        status: attempt.status,
+        submittedAt: attempt.submittedAt,
+        evaluatedAt: attempt.evaluatedAt,
+        result: attempt.result,
+      });
+    }
+
+    return fail(res, 409, "This attempt has already been submitted");
   }
 
   if (attempt.status !== "in_progress") {
-    return fail(res, 409, "Attempt cannot be submitted in its current state");
+    return fail(res, 409, "This attempt is no longer in progress");
   }
 
-  const submittedAt = new Date();
+  const now = new Date();
 
-  // A submitted body may contain final autosaved text.
-  if (typeof req.body.typedText === "string") {
-    attempt.typedText = req.body.typedText;
+  if (
+    !attempt.deadlineAt ||
+    now.getTime() >= new Date(attempt.deadlineAt).getTime()
+  ) {
+    // Persist expiration only if this request still owns the
+    // in-progress transition. A concurrent submission may win.
+    await TypingAttempt.updateOne(
+      {
+        _id: attempt._id,
+        candidate: candidateId,
+        status: "in_progress",
+        deadlineAt: { $lte: now },
+      },
+      {
+        $set: {
+          status: "expired",
+          lastActivityAt: now,
+        },
+      },
+    );
+
+    const latest = await TypingAttempt.findOne({
+      _id: attempt._id,
+      candidate: candidateId,
+    }).lean();
+
+    if (
+      latest?.status === "evaluated" &&
+      latest.submissionId === normalizedSubmissionId
+    ) {
+      return success(res, "Typing attempt already submitted", {
+        attemptId: latest._id,
+        status: latest.status,
+        submittedAt: latest.submittedAt,
+        evaluatedAt: latest.evaluatedAt,
+        result: latest.result,
+      });
+    }
+
+    return fail(res, 409, "Attempt time has expired");
   }
 
-  const snapshot = attempt.examSnapshot ?? {};
+  const snapshot = attempt.examSnapshot;
 
-  if (!snapshot.passageText) {
-    return fail(res, 500, "Attempt snapshot is missing its reference passage");
+  if (
+    !snapshot ||
+    !snapshot.title ||
+    !snapshot.language ||
+    !snapshot.evaluationRules ||
+    !Number.isInteger(snapshot.durationSeconds)
+  ) {
+    return fail(res, 409, "Attempt exam snapshot is incomplete");
   }
 
-  const durationSeconds = Number(snapshot.durationSeconds);
-
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    return fail(res, 500, "Attempt snapshot contains an invalid duration");
-  }
-
-  const timedOut = attempt.expiresAt && submittedAt >= attempt.expiresAt;
-
-  const evaluationTime = timedOut ? new Date(attempt.expiresAt) : submittedAt;
-
-  const rules = snapshot.evaluationRules ?? {};
-
-  const result = calculateTypingResult({
-    passageText: snapshot.passageText,
-    typedText: attempt.typedText ?? "",
-    startedAt: attempt.startedAt,
-    submittedAt: evaluationTime,
-    evaluationRules: rules,
-  });
-
-  attempt.submittedAt = submittedAt;
-  attempt.status = "evaluated";
-  attempt.result = {
-    ...result,
-    timedOut: Boolean(timedOut),
-    targetWpm: snapshot.targetWpm ?? null,
-    evaluationStrategy: rules.strategy ?? "gross_net_wpm",
-    evaluatedAt: submittedAt,
+  // The server owns exam metadata and evaluation timestamp.
+  // The frontend supplies the calculated performance metrics.
+  const resultToSave = {
+    ...submittedResult,
+    examDetails: buildTrustedExamDetails(snapshot),
+    evaluatedAt: now,
   };
 
-  await attempt.save();
+  // Atomic transition: only one concurrent request can change
+  // this attempt from in_progress to evaluated.
+  const savedAttempt = await TypingAttempt.findOneAndUpdate(
+    {
+      _id: attempt._id,
+      candidate: candidateId,
+      status: "in_progress",
+      deadlineAt: { $gt: now },
+    },
+    {
+      $set: {
+        typedText,
+        submissionId: normalizedSubmissionId,
+        result: resultToSave,
+        status: "evaluated",
+        submittedAt: now,
+        evaluatedAt: now,
+        lastActivityAt: now,
+      },
+    },
+    {
+      new: true,
+      runValidators: true,
+      context: "query",
+    },
+  );
+
+  if (!savedAttempt) {
+    // Another request may have submitted or expired the attempt.
+    const latest = await TypingAttempt.findOne({
+      _id: attempt._id,
+      candidate: candidateId,
+    }).lean();
+
+    if (
+      latest?.status === "evaluated" &&
+      latest.submissionId === normalizedSubmissionId
+    ) {
+      return success(res, "Typing attempt already submitted", {
+        attemptId: latest._id,
+        status: latest.status,
+        submittedAt: latest.submittedAt,
+        evaluatedAt: latest.evaluatedAt,
+        result: latest.result,
+      });
+    }
+
+    if (latest?.status === "evaluated") {
+      return fail(res, 409, "This attempt has already been submitted");
+    }
+
+    if (latest?.status === "expired") {
+      return fail(res, 409, "Attempt time has expired");
+    }
+
+    return fail(
+      res,
+      409,
+      "Attempt could not be submitted. Please retry if time remains.",
+    );
+  }
 
   return success(
     res,
-    "Typing attempt submitted and evaluated successfully",
-    attempt.result,
+    "Typing attempt submitted successfully",
+    {
+      attemptId: savedAttempt._id,
+      examId: savedAttempt.exam,
+      status: savedAttempt.status,
+      submissionId: savedAttempt.submissionId,
+      submittedAt: savedAttempt.submittedAt,
+      evaluatedAt: savedAttempt.evaluatedAt,
+      result: savedAttempt.result,
+    },
+    200,
   );
 });
 

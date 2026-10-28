@@ -390,6 +390,54 @@ const examInterfaceSchema = new Schema(
 );
 
 /* =====================================================
+   EXAM WORKFLOW
+===================================================== */
+
+const examWorkflowStageSchema = new Schema(
+  {
+    type: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 100,
+    },
+
+    required: {
+      type: Boolean,
+      default: true,
+    },
+
+    settings: {
+      type: Schema.Types.Mixed,
+      default: () => ({}),
+    },
+  },
+  {
+    _id: false,
+    strict: true,
+  },
+);
+
+const examWorkflowSchema = new Schema(
+  {
+    stages: {
+      type: [examWorkflowStageSchema],
+      required: true,
+      validate: {
+        validator(stages) {
+          return Array.isArray(stages) && stages.length > 0;
+        },
+        message: "Exam workflow must contain at least one stage.",
+      },
+    },
+  },
+  {
+    _id: false,
+    strict: true,
+  },
+);
+
+/* =====================================================
    ANALYTICS SETTINGS
 ===================================================== */
 
@@ -502,6 +550,10 @@ const typingExamConfigSchema = new Schema(
       default: () => ({}),
     },
 
+    examWorkflow: {
+      type: examWorkflowSchema,
+      default: () => ({}),
+    },
     version: {
       type: Number,
       required: true,

@@ -245,19 +245,7 @@ export const examWorkflowStageSchema = z
   .object({
     key: z.string().trim().min(1).max(100),
 
-    type: z.enum([
-      "instructions",
-      "system_check",
-      "keyboard_test",
-      "break",
-      "audio_test",
-      "typing_test",
-      "mcq_test",
-      "practical_test",
-      "review",
-      "submission",
-      "result",
-    ]),
+    type: z.string().trim().min(1).max(100),
 
     enabled: z.boolean().default(true),
 
@@ -319,7 +307,7 @@ export const createTypingExamConfigSchema = z
 
     analyticsSettings: analyticsSettingsSchema.default({}),
 
-    examWorkflow: examWorkflowSchema.optional(),
+    examWorkflow: examWorkflowSchema,
   })
   .strict();
 

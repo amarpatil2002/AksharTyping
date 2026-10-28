@@ -2,56 +2,81 @@ import mongoose from "mongoose";
 
 const { Schema, model, models } = mongoose;
 
-/**
- * A frozen copy of the reusable TypingExamConfig.
- *
- * Mixed is intentional here: configuration options can evolve as new
- * court and government typing examinations are added. The snapshot
- * preserves the exact settings used when the exam was published.
- */
+/* =====================================================
+   CONFIGURATION SNAPSHOT
+   Preserves the settings used by this exam.
+===================================================== */
+
 const configSnapshotSchema = new Schema(
   {
-    name: { type: String, required: true },
-    description: { type: String, default: "" },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 150,
+    },
+
+    description: {
+      type: String,
+      default: "",
+      maxlength: 2000,
+    },
+
     language: {
       type: String,
       enum: ["en", "hi", "mr"],
       required: true,
     },
+
     durationSeconds: {
       type: Number,
       required: true,
-      min: 1,
+      min: 10,
+      max: 7200,
     },
+
     targetWpm: {
       type: Number,
-      default: 0,
+      default: 40,
       min: 0,
+      max: 500,
     },
+
     instructions: {
       type: [String],
       default: [],
     },
+
     examMetadata: {
       type: Schema.Types.Mixed,
-      default: {},
+      default: () => ({}),
     },
+
     passageSettings: {
       type: Schema.Types.Mixed,
-      default: {},
+      default: () => ({}),
     },
+
     evaluationRules: {
       type: Schema.Types.Mixed,
-      default: {},
+      default: () => ({}),
     },
+
     examInterface: {
       type: Schema.Types.Mixed,
-      default: {},
+      default: () => ({}),
     },
+
     analyticsSettings: {
       type: Schema.Types.Mixed,
-      default: {},
+      default: () => ({}),
     },
+
+    examWorkflow: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+
     version: {
       type: Number,
       required: true,
@@ -60,9 +85,14 @@ const configSnapshotSchema = new Schema(
   },
   {
     _id: false,
+    id: false,
     strict: true,
   },
 );
+
+/* =====================================================
+   TYPING EXAM
+===================================================== */
 
 const typingExamSchema = new Schema(
   {
@@ -72,13 +102,6 @@ const typingExamSchema = new Schema(
       trim: true,
       minlength: 3,
       maxlength: 200,
-    },
-
-    description: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 2000,
     },
 
     passageText: {
@@ -92,17 +115,15 @@ const typingExamSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "TypingExamConfig",
       required: true,
-      index: true,
+      immutable: true,
     },
 
-    // Version of the reusable config used for this exam.
     configVersion: {
       type: Number,
       required: true,
       min: 1,
     },
 
-    // Frozen configuration used by this exam.
     configSnapshot: {
       type: configSnapshotSchema,
       default: undefined,
@@ -112,6 +133,7 @@ const typingExamSchema = new Schema(
       type: String,
       enum: ["draft", "published", "archived"],
       default: "draft",
+      required: true,
       index: true,
     },
 
@@ -129,7 +151,7 @@ const typingExamSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
+      immutable: true,
     },
 
     updatedBy: {
@@ -142,78 +164,82 @@ const typingExamSchema = new Schema(
     timestamps: true,
     versionKey: "__v",
     strict: true,
+    minimize: false,
   },
 );
 
-/**
- * Validate the exam before saving.
- */
+/* =====================================================
+   DOCUMENT VALIDATION
+===================================================== */
+
 typingExamSchema.pre("validate", function () {
-  if (this.status === "published") {
-    if (!this.publishedAt) {
-      this.publishedAt = new Date();
-    }
-
-    if (!this.configSnapshot) {
-      this.invalidate(
-        "configSnapshot",
-        "A published exam must have a frozen configuration snapshot.",
-      );
-    }
-  }
-
-  if (this.status === "draft") {
-    this.publishedAt = null;
-  }
-
-  if (this.status === "archived" && !this.archivedAt) {
-    this.archivedAt = new Date();
-  }
-
-  if (this.status !== "archived") {
-    this.archivedAt = null;
-  }
-
   if (
-    this.configSnapshot &&
+    this.configSnapshot?.version != null &&
     this.configVersion !== this.configSnapshot.version
   ) {
     this.invalidate(
       "configVersion",
-      "configVersion must match configSnapshot.version.",
+      "Configuration version must match the snapshot version.",
     );
+  }
+
+  if (this.status === "published") {
+    if (!this.configSnapshot) {
+      this.invalidate(
+        "configSnapshot",
+        "A configuration snapshot is required to publish an exam.",
+      );
+    }
+
+    if (!this.publishedAt) {
+      this.publishedAt = new Date();
+    }
+
+    if (!this.passageText?.trim()) {
+      this.invalidate(
+        "passageText",
+        "A non-empty passage is required to publish an exam.",
+      );
+    }
+  } else {
+    this.publishedAt = null;
+  }
+
+  if (this.status === "archived") {
+    if (!this.archivedAt) {
+      this.archivedAt = new Date();
+    }
+  } else {
+    this.archivedAt = null;
   }
 });
 
-/**
- * Useful indexes for administration and candidate exam listings.
- */
+/* =====================================================
+   INDEXES
+===================================================== */
+
+// Admin exam listing.
 typingExamSchema.index({
   status: 1,
-  publishedAt: -1,
+  createdAt: -1,
 });
 
+// Exams associated with a configuration.
 typingExamSchema.index({
   config: 1,
   status: 1,
-  createdAt: -1,
 });
 
+// Candidate-facing published exam filtering.
 typingExamSchema.index({
-  createdBy: 1,
-  createdAt: -1,
-});
-
-typingExamSchema.index({
-  "configSnapshot.examMetadata.state": 1,
-  "configSnapshot.examMetadata.courtName": 1,
   status: 1,
-});
-
-typingExamSchema.index({
   "configSnapshot.language": 1,
-  status: 1,
+  createdAt: -1,
 });
+
+/* =====================================================
+   MODEL EXPORT
+===================================================== */
 
 const TypingExam = models.TypingExam || model("TypingExam", typingExamSchema);
 
