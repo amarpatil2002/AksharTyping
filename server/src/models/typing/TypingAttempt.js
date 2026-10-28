@@ -4,63 +4,47 @@ const { Schema, model, models } = mongoose;
 
 const MAX_PASSAGE_LENGTH = 50_000;
 const MAX_TIMELINE_POINTS = 5_000;
-const MAX_CHARACTER_ANALYSIS = 20_000;
-const MAX_ERROR_CATEGORIES = 50;
-const MAX_RECOMMENDATIONS = 30;
-const MAX_QUALIFICATION_REASONS = 50;
-const MAX_SEGMENTS = 500;
 
 /* =====================================================
-   SHARED SCHEMA HELPERS
-===================================================== */
+   FROZEN EXAM CONFIGURATION SNAPSHOT
 
-const boundedCount = {
-  type: Number,
-  required: true,
-  min: 0,
-  max: 100_000_000,
-  default: 0,
-};
-
-const boundedWpm = {
-  type: Number,
-  required: true,
-  min: 0,
-  max: 1000,
-  default: 0,
-};
-
-const percentage = {
-  type: Number,
-  required: true,
-  min: 0,
-  max: 100,
-  default: 0,
-};
-
-/* =====================================================
-   EXAM SNAPSHOT
+   Built from TypingExamConfig when an attempt starts.
+   Never update this snapshot when the config changes.
 ===================================================== */
 
 const examSnapshotSchema = new Schema(
   {
-    title: {
+    config: {
+      type: Schema.Types.ObjectId,
+      ref: "TypingExamConfig",
+      required: true,
+      immutable: true,
+    },
+
+    configVersion: {
+      type: Number,
+      required: true,
+      min: 1,
+      immutable: true,
+    },
+
+    name: {
       type: String,
       required: true,
       trim: true,
-      maxlength: 200,
+      maxlength: 150,
+    },
+
+    description: {
+      type: String,
+      default: "",
+      maxlength: 2000,
     },
 
     language: {
       type: String,
       enum: ["en", "hi", "mr"],
       required: true,
-    },
-
-    passageText: {
-      type: String,
-      required: true,
-      maxlength: MAX_PASSAGE_LENGTH,
     },
 
     durationSeconds: {
@@ -72,9 +56,9 @@ const examSnapshotSchema = new Schema(
 
     targetWpm: {
       type: Number,
-      default: 40,
       min: 0,
       max: 500,
+      default: 40,
     },
 
     instructions: {
@@ -82,7 +66,7 @@ const examSnapshotSchema = new Schema(
       default: [],
       validate: {
         validator: (items) =>
-          items.length <= 100 && items.every((item) => item.length <= 2000),
+          items.length <= 30 && items.every((item) => item.length <= 500),
         message: "Invalid exam instructions.",
       },
     },
@@ -117,22 +101,48 @@ const examSnapshotSchema = new Schema(
       default: undefined,
     },
 
-    configVersion: {
-      type: Number,
+    // Actual reference passage selected for this attempt.
+    passageText: {
+      type: String,
       required: true,
-      min: 1,
+      maxlength: MAX_PASSAGE_LENGTH,
     },
   },
   {
     _id: false,
     id: false,
     strict: true,
+    minimize: false,
   },
 );
 
 /* =====================================================
-   ATTEMPT TIMELINE METRICS
+   TIMELINE METRICS
 ===================================================== */
+
+const boundedCount = {
+  type: Number,
+  required: true,
+  min: 0,
+  max: 100_000_000,
+  default: 0,
+};
+
+const boundedWpm = {
+  type: Number,
+  required: true,
+  min: 0,
+  max: 1000,
+  default: 0,
+};
+
+const percentage = {
+  type: Number,
+  required: true,
+  min: 0,
+  max: 100,
+  default: 0,
+};
 
 const typingTimelineMetricSchema = new Schema(
   {
@@ -148,6 +158,7 @@ const typingTimelineMetricSchema = new Schema(
     incorrectCharacters: boundedCount,
     missedCharacters: boundedCount,
     extraCharacters: boundedCount,
+
     grossWpm: boundedWpm,
     netWpm: boundedWpm,
     accuracy: percentage,
@@ -157,489 +168,6 @@ const typingTimelineMetricSchema = new Schema(
     _id: false,
     id: false,
     strict: "throw",
-  },
-);
-
-/* =====================================================
-   RESULT CHARACTER ANALYSIS
-===================================================== */
-
-const characterAnalysisSchema = new Schema(
-  {
-    referenceIndex: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    referenceCharacter: {
-      type: String,
-      required: true,
-      maxlength: 16,
-    },
-
-    typedCharacter: {
-      type: String,
-      default: null,
-      maxlength: 16,
-    },
-
-    type: {
-      type: String,
-      required: true,
-      enum: ["correct", "incorrect", "missing", "extra"],
-    },
-
-    category: {
-      type: String,
-      enum: [
-        "letter",
-        "number",
-        "punctuation",
-        "whitespace",
-        "symbol",
-        "other",
-      ],
-      default: "other",
-    },
-  },
-  { _id: false, strict: "throw" },
-);
-
-/* =====================================================
-   RESULT TIMELINE
-===================================================== */
-
-const resultTimelineSchema = new Schema(
-  {
-    elapsedSeconds: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 7200,
-    },
-
-    typedCharacters: boundedCount,
-    correctCharacters: boundedCount,
-    incorrectCharacters: boundedCount,
-    missedCharacters: boundedCount,
-    extraCharacters: boundedCount,
-    grossWpm: boundedWpm,
-    netWpm: boundedWpm,
-    accuracy: percentage,
-    errorsInInterval: boundedCount,
-  },
-  { _id: false, strict: "throw" },
-);
-
-/* =====================================================
-   ERROR DISTRIBUTION
-===================================================== */
-
-const errorCategorySchema = new Schema(
-  {
-    category: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 100,
-    },
-
-    count: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 100_000_000,
-    },
-
-    percentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-  },
-  { _id: false, strict: "throw" },
-);
-
-/* =====================================================
-   PERFORMANCE SEGMENTS
-===================================================== */
-
-const performanceSegmentSchema = new Schema(
-  {
-    segmentIndex: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    label: {
-      type: String,
-      trim: true,
-      maxlength: 200,
-      default: "",
-    },
-
-    startElapsedSeconds: {
-      type: Number,
-      min: 0,
-      max: 7200,
-      default: null,
-    },
-
-    endElapsedSeconds: {
-      type: Number,
-      min: 0,
-      max: 7200,
-      default: null,
-    },
-
-    typedCharacters: boundedCount,
-    correctCharacters: boundedCount,
-    incorrectCharacters: boundedCount,
-    grossWpm: boundedWpm,
-    netWpm: boundedWpm,
-    accuracy: percentage,
-    errors: boundedCount,
-  },
-  { _id: false, strict: "throw" },
-);
-
-/* =====================================================
-   SKILL PROFILE
-===================================================== */
-
-const skillScoreSchema = new Schema(
-  {
-    skill: {
-      type: String,
-      required: true,
-      enum: [
-        "speed",
-        "accuracy",
-        "consistency",
-        "punctuation",
-        "spacing",
-        "capitalization",
-        "number_entry",
-        "endurance",
-        "correction",
-        "overall",
-      ],
-    },
-
-    score: percentage,
-
-    benchmarkScore: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-  },
-  { _id: false, strict: "throw" },
-);
-
-/* =====================================================
-   IMPROVEMENT PLAN
-===================================================== */
-
-const improvementRecommendationSchema = new Schema(
-  {
-    category: {
-      type: String,
-      required: true,
-      enum: [
-        "speed",
-        "accuracy",
-        "consistency",
-        "punctuation",
-        "spacing",
-        "capitalization",
-        "number_entry",
-        "endurance",
-        "general",
-      ],
-    },
-
-    priority: {
-      type: String,
-      enum: ["low", "medium", "high", "critical"],
-      default: "medium",
-    },
-
-    title: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 200,
-    },
-
-    description: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 2000,
-    },
-
-    suggestedMinutes: {
-      type: Number,
-      min: 0,
-      max: 1440,
-      default: 10,
-    },
-
-    targetValue: {
-      type: Number,
-      default: null,
-    },
-
-    currentValue: {
-      type: Number,
-      default: null,
-    },
-  },
-  { _id: false, strict: "throw" },
-);
-
-/* =====================================================
-   TYPING RESULT
-===================================================== */
-
-const typingResultSchema = new Schema(
-  {
-    outcome: {
-      type: String,
-      required: true,
-      enum: ["pass", "fail", "incomplete"],
-    },
-
-    timedOut: {
-      type: Boolean,
-      required: true,
-      default: false,
-    },
-
-    evaluationStrategy: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 100,
-    },
-
-    // Overall performance
-    grossWpm: boundedWpm,
-    netWpm: boundedWpm,
-    accuracy: percentage,
-
-    // Character and word statistics
-    totalCharacters: boundedCount,
-    typedCharacters: boundedCount,
-    correctCharacters: boundedCount,
-    incorrectCharacters: boundedCount,
-    missedCharacters: boundedCount,
-    extraCharacters: boundedCount,
-    totalErrors: boundedCount,
-    correctWords: boundedCount,
-    totalReferenceCharacters: boundedCount,
-
-    // Duration and pace
-    durationSeconds: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 7200,
-    },
-
-    averageWpm: {
-      type: Number,
-      min: 0,
-      max: 1000,
-      default: null,
-    },
-
-    peakWpm: {
-      type: Number,
-      min: 0,
-      max: 1000,
-      default: null,
-    },
-
-    lowestWpm: {
-      type: Number,
-      min: 0,
-      max: 1000,
-      default: null,
-    },
-
-    averageAccuracy: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-
-    // Consistency and fatigue analysis
-    consistencyScore: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-
-    speedVariation: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-
-    fatigueIndicator: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-
-    // Qualification
-    targetWpm: {
-      type: Number,
-      min: 0,
-      max: 1000,
-      default: null,
-    },
-
-    minimumWpm: {
-      type: Number,
-      min: 0,
-      max: 1000,
-      default: null,
-    },
-
-    minimumAccuracy: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-
-    marksObtained: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-
-    maximumMarks: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-
-    passingMarks: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-
-    passed: {
-      type: Boolean,
-      required: true,
-    },
-
-    qualificationOnly: {
-      type: Boolean,
-      default: false,
-    },
-
-    qualificationReasons: {
-      type: [
-        {
-          type: String,
-          trim: true,
-          maxlength: 500,
-        },
-      ],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_QUALIFICATION_REASONS,
-        message: "Too many qualification reasons.",
-      },
-    },
-
-    // Graph datasets
-    timeline: {
-      type: [resultTimelineSchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_TIMELINE_POINTS,
-        message: "Too many result timeline points.",
-      },
-    },
-
-    errorDistribution: {
-      type: [errorCategorySchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_ERROR_CATEGORIES,
-        message: "Too many error categories.",
-      },
-    },
-
-    performanceSegments: {
-      type: [performanceSegmentSchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_SEGMENTS,
-        message: "Too many performance segments.",
-      },
-    },
-
-    skillProfile: {
-      type: [skillScoreSchema],
-      default: [],
-      validate: {
-        validator: (items) =>
-          items.length <= 20 &&
-          new Set(items.map((item) => item.skill)).size === items.length,
-        message: "Skill profile contains duplicate or excessive skills.",
-      },
-    },
-
-    characterAnalysis: {
-      type: [characterAnalysisSchema],
-      default: undefined,
-      validate: {
-        validator: (items) => items.length <= MAX_CHARACTER_ANALYSIS,
-        message: "Character analysis exceeds the allowed limit.",
-      },
-    },
-
-    improvementPlan: {
-      type: [improvementRecommendationSchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_RECOMMENDATIONS,
-        message: "Too many improvement recommendations.",
-      },
-    },
-
-    reportVersion: {
-      type: Number,
-      required: true,
-      min: 1,
-      default: 1,
-    },
-
-    evaluatedAt: {
-      type: Date,
-      required: true,
-    },
-  },
-  {
-    _id: false,
-    id: false,
-    strict: "throw",
-    minimize: false,
   },
 );
 
@@ -654,15 +182,19 @@ const typingAttemptSchema = new Schema(
       ref: "User",
       required: true,
       immutable: true,
+      index: true,
     },
 
+    // The concrete exam instance being attempted.
     exam: {
       type: Schema.Types.ObjectId,
       ref: "TypingExam",
       required: true,
       immutable: true,
+      index: true,
     },
 
+    // Frozen configuration and passage used by this attempt.
     examSnapshot: {
       type: examSnapshotSchema,
       required: true,
@@ -672,8 +204,8 @@ const typingAttemptSchema = new Schema(
     status: {
       type: String,
       enum: ["in_progress", "submitted", "expired", "evaluated", "cancelled"],
-      default: "in_progress",
       required: true,
+      default: "in_progress",
       index: true,
     },
 
@@ -706,6 +238,7 @@ const typingAttemptSchema = new Schema(
       maxlength: MAX_PASSAGE_LENGTH,
     },
 
+    // Collected according to the frozen analytics configuration.
     timeline: {
       type: [typingTimelineMetricSchema],
       default: [],
@@ -715,12 +248,14 @@ const typingAttemptSchema = new Schema(
       },
     },
 
-    // Embedded result report.
+    // Separate TypingResult document; no embedded report.
     result: {
-      type: typingResultSchema,
-      default: undefined,
+      type: Schema.Types.ObjectId,
+      ref: "TypingResult",
+      default: null,
     },
 
+    // Idempotency key supplied for a submission request.
     submissionId: {
       type: String,
       trim: true,
@@ -753,15 +288,22 @@ typingAttemptSchema.pre("validate", function () {
     );
   }
 
-  if (this.status === "evaluated" && !this.result) {
-    this.invalidate("result", "An evaluated attempt must contain a result.");
-  }
+  if (!this.examSnapshot) return;
 
-  if (this.status === "evaluated" && !this.evaluatedAt) {
-    this.invalidate(
-      "evaluatedAt",
-      "An evaluated attempt must have an evaluation timestamp.",
-    );
+  if (
+    this.deadlineAt &&
+    this.startedAt &&
+    this.examSnapshot.durationSeconds > 0
+  ) {
+    const maximumDeadline =
+      this.startedAt.getTime() + this.examSnapshot.durationSeconds * 1000;
+
+    if (this.deadlineAt.getTime() !== maximumDeadline) {
+      this.invalidate(
+        "deadlineAt",
+        "Deadline must match the configured exam duration.",
+      );
+    }
   }
 
   if (this.status === "submitted" && !this.submittedAt) {
@@ -771,76 +313,18 @@ typingAttemptSchema.pre("validate", function () {
     );
   }
 
-  if (this.result) {
-    if (this.result.correctCharacters > this.result.totalCharacters) {
-      this.invalidate(
-        "result.correctCharacters",
-        "Correct characters cannot exceed total characters.",
-      );
-    }
+  if (this.status === "evaluated" && !this.result) {
+    this.invalidate(
+      "result",
+      "An evaluated attempt must reference a result document.",
+    );
+  }
 
-    if (this.result.incorrectCharacters > this.result.totalCharacters) {
-      this.invalidate(
-        "result.incorrectCharacters",
-        "Incorrect characters cannot exceed total characters.",
-      );
-    }
-
-    if (
-      this.result.correctCharacters + this.result.incorrectCharacters >
-      this.result.totalCharacters
-    ) {
-      this.invalidate(
-        "result.totalCharacters",
-        "Correct and incorrect characters cannot exceed total characters combined.",
-      );
-    }
-
-    if (
-      this.result.maximumMarks != null &&
-      this.result.marksObtained != null &&
-      this.result.marksObtained > this.result.maximumMarks
-    ) {
-      this.invalidate(
-        "result.marksObtained",
-        "Marks obtained cannot exceed maximum marks.",
-      );
-    }
-
-    if (
-      this.result.maximumMarks != null &&
-      this.result.passingMarks != null &&
-      this.result.passingMarks > this.result.maximumMarks
-    ) {
-      this.invalidate(
-        "result.passingMarks",
-        "Passing marks cannot exceed maximum marks.",
-      );
-    }
-
-    for (const [index, point] of (this.result.timeline || []).entries()) {
-      if (point.elapsedSeconds > this.result.durationSeconds) {
-        this.invalidate(
-          `result.timeline.${index}.elapsedSeconds`,
-          "Result timeline exceeds the attempt duration.",
-        );
-      }
-    }
-
-    for (const [index, segment] of (
-      this.result.performanceSegments || []
-    ).entries()) {
-      if (
-        segment.startElapsedSeconds != null &&
-        segment.endElapsedSeconds != null &&
-        segment.endElapsedSeconds < segment.startElapsedSeconds
-      ) {
-        this.invalidate(
-          `result.performanceSegments.${index}.endElapsedSeconds`,
-          "Segment end must not precede its start.",
-        );
-      }
-    }
+  if (this.status === "evaluated" && !this.evaluatedAt) {
+    this.invalidate(
+      "evaluatedAt",
+      "An evaluated attempt must have an evaluation timestamp.",
+    );
   }
 
   for (const [index, metric] of (this.timeline || []).entries()) {

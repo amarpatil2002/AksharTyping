@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import TypingExam from "../../../models/typing/TypingExam.js";
 import TypingExamConfig from "../../../models/typing/TypingExamConfig.js";
 import TypingAttempt from "../../../models/typing/TypingAttempt.js";
+import TypingResult from "../../../models/typing/TypingResult.js";
 
 /* =========================================================
    SHARED HELPERS
@@ -86,42 +87,6 @@ const getConfigSnapshot = (config) => ({
   examWorkflow: config.examWorkflow,
   version: config.version,
 });
-
-/**
- * Create the immutable exam settings copied into a candidate attempt.
- */
-const getExamSnapshot = (exam) => {
-  const config = plain(exam.configSnapshot) ?? {};
-
-  return {
-    title: exam.title,
-    passageText: exam.passageText,
-    language: config.language ?? "en",
-    durationSeconds: config.durationSeconds,
-    targetWpm: config.targetWpm ?? 0,
-    instructions: config.instructions ?? [],
-    examMetadata: config.examMetadata ?? {},
-    passageSettings: config.passageSettings ?? {},
-    evaluationRules: config.evaluationRules ?? {},
-    examInterface: config.examInterface ?? {},
-    analyticsSettings: config.analyticsSettings ?? {},
-    configVersion: exam.configVersion,
-  };
-};
-
-const configEditableFields = [
-  "name",
-  "description",
-  "language",
-  "durationSeconds",
-  "targetWpm",
-  "instructions",
-  "examMetadata",
-  "passageSettings",
-  "evaluationRules",
-  "examInterface",
-  "analyticsSettings",
-];
 
 /* =========================================================
    CONFIGURATION CONTROLLERS
@@ -1055,26 +1020,58 @@ export const startTypingAttempt = asyncHandler(async (req, res) => {
   const durationSeconds = Number(config.durationSeconds);
 
   if (
+    !exam.config ||
+    !config.name?.trim() ||
+    !config.language ||
+    !Number.isInteger(config.version) ||
+    config.version < 1 ||
     !Number.isInteger(durationSeconds) ||
     durationSeconds < 10 ||
-    durationSeconds > 7200
+    durationSeconds > 7200 ||
+    typeof exam.passageText !== "string" ||
+    !exam.passageText.trim()
   ) {
-    return fail(res, 409, "Invalid exam duration configuration");
-  }
-
-  if (!config.language || !config.version || !exam.passageText?.trim()) {
     return fail(res, 409, "Published exam configuration is incomplete");
   }
 
+  if (exam.configVersion !== config.version) {
+    return fail(
+      res,
+      409,
+      "Published exam configuration version is inconsistent",
+    );
+  }
+
   const startedAt = new Date();
+
+  // Cancel any previous active attempts for this candidate and exam.
+  await TypingAttempt.updateMany(
+    {
+      candidate: candidateId,
+      exam: exam._id,
+      status: "in_progress",
+    },
+    {
+      $set: {
+        status: "cancelled",
+        lastActivityAt: startedAt,
+      },
+    },
+  );
+
   const deadlineAt = new Date(startedAt.getTime() + durationSeconds * 1000);
 
   const examSnapshot = {
-    title: exam.title,
+    config: exam.config,
+    configVersion: config.version,
+    name: config.name,
+    description: config.description ?? "",
+
     language: config.language,
     passageText: exam.passageText,
     durationSeconds,
-    targetWpm: config.targetWpm ?? 0,
+    targetWpm: config.targetWpm ?? 40,
+
     instructions: config.instructions ?? [],
     examMetadata: config.examMetadata ?? {},
     passageSettings: config.passageSettings ?? {},
@@ -1082,21 +1079,16 @@ export const startTypingAttempt = asyncHandler(async (req, res) => {
     examInterface: config.examInterface ?? {},
     analyticsSettings: config.analyticsSettings ?? {},
     examWorkflow: config.examWorkflow,
-    configVersion: config.version,
   };
-
-  // Do not delete previous attempts here.
-  // Preserve history and handle unfinished attempts through
-  // an explicit cancellation or abandonment policy.
 
   const attempt = await TypingAttempt.create({
     candidate: candidateId,
     exam: exam._id,
     examSnapshot,
     status: "in_progress",
-    lastActivityAt: startedAt,
     startedAt,
     deadlineAt,
+    lastActivityAt: startedAt,
     typedText: "",
     timeline: [],
   });
@@ -1110,8 +1102,16 @@ export const startTypingAttempt = asyncHandler(async (req, res) => {
       status: attempt.status,
       startedAt: attempt.startedAt,
       deadlineAt: attempt.deadlineAt,
+      serverTime: startedAt,
       durationSeconds,
-      exam: attempt.examSnapshot,
+      passage: {
+        language: attempt.examSnapshot.language,
+        text: attempt.examSnapshot.passageText,
+      },
+      instructions: attempt.examSnapshot.instructions,
+      examInterface: attempt.examSnapshot.examInterface,
+      analyticsSettings: attempt.examSnapshot.analyticsSettings,
+      configVersion: attempt.examSnapshot.configVersion,
     },
     201,
   );
@@ -1331,12 +1331,209 @@ const buildTrustedExamDetails = (snapshot) => ({
 const isSameSubmission = (attempt, submissionId) =>
   attempt.status === "evaluated" && attempt.submissionId === submissionId;
 
+// Uses your existing helpers/constants:
+// requireUserId, isValidId, fail, success,
+// MAX_TYPED_TEXT_LENGTH, MAX_SUBMISSION_ID_LENGTH.
+
+const calculateTypingMetrics = ({
+  referenceText,
+  typedText,
+  elapsedSeconds,
+  evaluationRules = {},
+}) => {
+  const wordLength = Math.max(1, Number(evaluationRules.wordLength) || 5);
+
+  const ignoreCase = evaluationRules.ignoreCase === true;
+  const countPunctuation = evaluationRules.countPunctuation !== false;
+
+  const normalizeChar = (char) =>
+    ignoreCase ? char.toLocaleLowerCase() : char;
+
+  const shouldCount = (char) =>
+    countPunctuation || !/[^\p{L}\p{N}\s]/u.test(char);
+
+  const reference = Array.from(referenceText);
+  const typed = Array.from(typedText);
+
+  let correctCharacters = 0;
+  let incorrectCharacters = 0;
+  let missedCharacters = 0;
+  let extraCharacters = 0;
+
+  const maxLength = Math.max(reference.length, typed.length);
+
+  for (let i = 0; i < maxLength; i += 1) {
+    const expected = reference[i];
+    const actual = typed[i];
+
+    if (expected === undefined) {
+      if (shouldCount(actual)) extraCharacters += 1;
+      continue;
+    }
+
+    if (!shouldCount(expected)) continue;
+
+    if (actual === undefined) {
+      missedCharacters += 1;
+      continue;
+    }
+
+    if (!shouldCount(actual)) {
+      incorrectCharacters += 1;
+      continue;
+    }
+
+    if (normalizeChar(expected) === normalizeChar(actual)) {
+      correctCharacters += 1;
+    } else {
+      incorrectCharacters += 1;
+    }
+  }
+
+  const totalTypedCharacters =
+    correctCharacters + incorrectCharacters + extraCharacters;
+
+  const totalErrors = incorrectCharacters + missedCharacters + extraCharacters;
+
+  const accuracy =
+    totalTypedCharacters > 0
+      ? Number(((correctCharacters / totalTypedCharacters) * 100).toFixed(2))
+      : 0;
+
+  const minutes = elapsedSeconds / 60;
+
+  const grossWpm =
+    minutes > 0
+      ? Number((totalTypedCharacters / wordLength / minutes).toFixed(2))
+      : 0;
+
+  const netWpm =
+    minutes > 0
+      ? Number(
+          (
+            Math.max(0, totalTypedCharacters - totalErrors) /
+            wordLength /
+            minutes
+          ).toFixed(2),
+        )
+      : 0;
+
+  return {
+    elapsedSeconds,
+    totalTypedCharacters,
+    correctCharacters,
+    incorrectCharacters,
+    missedCharacters,
+    extraCharacters,
+    totalErrors,
+    accuracy,
+    grossWpm,
+    netWpm,
+  };
+};
+
+const evaluateQualification = ({ metrics, evaluationRules = {} }) => {
+  const reasons = [];
+
+  const minimumWpm = Number(evaluationRules.minimumWpm ?? 0);
+  const minimumAccuracy = Number(evaluationRules.minimumAccuracy ?? 0);
+  const minimumCorrectCharacters = Number(
+    evaluationRules.minimumCorrectCharacters ?? 0,
+  );
+  const minimumCorrectWords = Number(evaluationRules.minimumCorrectWords ?? 0);
+
+  const passedWpm = metrics.netWpm >= minimumWpm;
+  const passedAccuracy = metrics.accuracy >= minimumAccuracy;
+  const passedCharacters =
+    metrics.correctCharacters >= minimumCorrectCharacters;
+
+  // Count contiguous runs of non-whitespace characters as words.
+  const correctWords =
+    metrics.correctCharacters > 0 ? metrics.correctCharacters : 0;
+
+  // Exact correct-word evaluation requires word-level comparison.
+  // Do not claim a word-level pass when only character metrics exist.
+  const checks = [];
+
+  if (minimumWpm > 0) {
+    checks.push(passedWpm);
+    if (!passedWpm) reasons.push("Minimum typing speed not achieved");
+  }
+
+  if (minimumAccuracy > 0) {
+    checks.push(passedAccuracy);
+    if (!passedAccuracy) reasons.push("Minimum accuracy not achieved");
+  }
+
+  if (minimumCorrectCharacters > 0) {
+    checks.push(passedCharacters);
+    if (!passedCharacters) {
+      reasons.push("Minimum correct character count not achieved");
+    }
+  }
+
+  if (minimumCorrectWords > 0) {
+    const passedWords = correctWords >= minimumCorrectWords;
+    checks.push(passedWords);
+    if (!passedWords) reasons.push("Minimum correct word count not achieved");
+  }
+
+  const passed =
+    checks.length === 0
+      ? true
+      : evaluationRules.passingMode === "any"
+        ? checks.some(Boolean)
+        : checks.every(Boolean);
+
+  return {
+    passed,
+    minimumWpm,
+    minimumAccuracy,
+    minimumCorrectCharacters,
+    minimumCorrectWords,
+    reasons,
+  };
+};
+
+const validateSpeedGraph = (speedGraph, durationSeconds) => {
+  if (speedGraph === undefined) return [];
+
+  if (!Array.isArray(speedGraph) || speedGraph.length > 1440) {
+    throw new Error("Invalid speed graph");
+  }
+
+  let previousElapsed = -1;
+
+  return speedGraph.map((point) => {
+    if (
+      !point ||
+      !Number.isInteger(point.elapsedSeconds) ||
+      point.elapsedSeconds < 0 ||
+      point.elapsedSeconds > durationSeconds ||
+      point.elapsedSeconds <= previousElapsed ||
+      typeof point.wpm !== "number" ||
+      !Number.isFinite(point.wpm) ||
+      point.wpm < 0 ||
+      point.wpm > 1000
+    ) {
+      throw new Error("Invalid speed graph points");
+    }
+
+    previousElapsed = point.elapsedSeconds;
+
+    return {
+      elapsedSeconds: point.elapsedSeconds,
+      wpm: point.wpm,
+    };
+  });
+};
+
 export const submitTypingAttempt = asyncHandler(async (req, res) => {
   const candidateId = requireUserId(req, res);
   if (!candidateId) return;
 
   const { attemptId } = req.params;
-  const { typedText, submissionId, result: submittedResult } = req.body;
+  const { typedText, submissionId, speedGraph = [] } = req.body;
 
   if (!isValidId(attemptId)) {
     return fail(res, 400, "Invalid attempt ID");
@@ -1357,17 +1554,8 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
     return fail(res, 400, "Invalid submission ID");
   }
 
-  if (
-    !submittedResult ||
-    typeof submittedResult !== "object" ||
-    Array.isArray(submittedResult)
-  ) {
-    return fail(res, 400, "A valid typing result is required");
-  }
-
   const normalizedSubmissionId = submissionId.trim();
 
-  // Load only an attempt owned by this candidate.
   const attempt = await TypingAttempt.findOne({
     _id: attemptId,
     candidate: candidateId,
@@ -1377,20 +1565,30 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
     return fail(res, 404, "Typing attempt not found");
   }
 
-  // Idempotency: retrying the same completed submission returns
-  // the saved result instead of creating a second submission.
-  if (attempt.status === "evaluated") {
-    if (isSameSubmission(attempt, normalizedSubmissionId)) {
+  // A completed request may be retried using the same submission ID.
+  if (["submitted", "evaluated"].includes(attempt.status)) {
+    if (attempt.submissionId !== normalizedSubmissionId) {
+      return fail(res, 409, "This attempt has already been submitted");
+    }
+
+    const existingResult = attempt.result
+      ? await TypingResult.findById(attempt.result).lean()
+      : null;
+
+    if (existingResult) {
       return success(res, "Typing attempt already submitted", {
         attemptId: attempt._id,
         status: attempt.status,
         submittedAt: attempt.submittedAt,
-        evaluatedAt: attempt.evaluatedAt,
-        result: attempt.result,
+        result: existingResult,
       });
     }
 
-    return fail(res, 409, "This attempt has already been submitted");
+    return fail(
+      res,
+      409,
+      "Submission is being processed. Please retry shortly.",
+    );
   }
 
   if (attempt.status !== "in_progress") {
@@ -1399,12 +1597,7 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
 
   const now = new Date();
 
-  if (
-    !attempt.deadlineAt ||
-    now.getTime() >= new Date(attempt.deadlineAt).getTime()
-  ) {
-    // Persist expiration only if this request still owns the
-    // in-progress transition. A concurrent submission may win.
+  if (!attempt.deadlineAt || now >= new Date(attempt.deadlineAt)) {
     await TypingAttempt.updateOne(
       {
         _id: attempt._id,
@@ -1420,24 +1613,6 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
       },
     );
 
-    const latest = await TypingAttempt.findOne({
-      _id: attempt._id,
-      candidate: candidateId,
-    }).lean();
-
-    if (
-      latest?.status === "evaluated" &&
-      latest.submissionId === normalizedSubmissionId
-    ) {
-      return success(res, "Typing attempt already submitted", {
-        attemptId: latest._id,
-        status: latest.status,
-        submittedAt: latest.submittedAt,
-        evaluatedAt: latest.evaluatedAt,
-        result: latest.result,
-      });
-    }
-
     return fail(res, 409, "Attempt time has expired");
   }
 
@@ -1445,25 +1620,79 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
 
   if (
     !snapshot ||
-    !snapshot.title ||
-    !snapshot.language ||
+    !snapshot.config ||
+    !snapshot.name ||
+    !snapshot.passageText ||
     !snapshot.evaluationRules ||
     !Number.isInteger(snapshot.durationSeconds)
   ) {
     return fail(res, 409, "Attempt exam snapshot is incomplete");
   }
 
-  // The server owns exam metadata and evaluation timestamp.
-  // The frontend supplies the calculated performance metrics.
-  const resultToSave = {
-    ...submittedResult,
-    examDetails: buildTrustedExamDetails(snapshot),
+  let graph;
+
+  try {
+    graph = validateSpeedGraph(speedGraph, snapshot.durationSeconds);
+  } catch {
+    return fail(res, 400, "Invalid speed graph points");
+  }
+
+  // Use server timestamps rather than trusting client-reported duration.
+  const elapsedSeconds = Math.max(
+    1,
+    Math.min(
+      snapshot.durationSeconds,
+      Math.ceil((now.getTime() - new Date(attempt.startedAt).getTime()) / 1000),
+    ),
+  );
+
+  const metrics = calculateTypingMetrics({
+    referenceText: snapshot.passageText,
+    typedText,
+    elapsedSeconds,
+    evaluationRules: snapshot.evaluationRules,
+  });
+
+  const qualification = evaluateQualification({
+    metrics,
+    evaluationRules: snapshot.evaluationRules,
+  });
+
+  const report = {
+    summary: {
+      grossWpm: metrics.grossWpm,
+      netWpm: metrics.netWpm,
+      accuracy: metrics.accuracy,
+      totalTypedCharacters: metrics.totalTypedCharacters,
+      correctCharacters: metrics.correctCharacters,
+      incorrectCharacters: metrics.incorrectCharacters,
+      missedCharacters: metrics.missedCharacters,
+      extraCharacters: metrics.extraCharacters,
+      totalErrors: metrics.totalErrors,
+      durationSeconds: elapsedSeconds,
+    },
+    outcome: {
+      passed: qualification.passed,
+      reasons: qualification.reasons,
+    },
+    evaluationStrategy: snapshot.evaluationRules.strategy,
+    qualification,
+    graph: {
+      speedTimeline: graph,
+    },
+    examDetails: {
+      name: snapshot.name,
+      language: snapshot.language,
+      configVersion: snapshot.configVersion,
+      durationSeconds: snapshot.durationSeconds,
+      targetWpm: snapshot.targetWpm,
+    },
     evaluatedAt: now,
+    reportVersion: 1,
   };
 
-  // Atomic transition: only one concurrent request can change
-  // this attempt from in_progress to evaluated.
-  const savedAttempt = await TypingAttempt.findOneAndUpdate(
+  // Claim the attempt atomically. A competing request cannot claim it.
+  const claimedAttempt = await TypingAttempt.findOneAndUpdate(
     {
       _id: attempt._id,
       candidate: candidateId,
@@ -1472,68 +1701,115 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
     },
     {
       $set: {
+        status: "submitted",
         typedText,
         submissionId: normalizedSubmissionId,
-        result: resultToSave,
-        status: "evaluated",
         submittedAt: now,
-        evaluatedAt: now,
         lastActivityAt: now,
       },
     },
     {
       new: true,
       runValidators: true,
-      context: "query",
     },
   );
 
-  if (!savedAttempt) {
-    // Another request may have submitted or expired the attempt.
+  if (!claimedAttempt) {
     const latest = await TypingAttempt.findOne({
       _id: attempt._id,
       candidate: candidateId,
     }).lean();
 
     if (
-      latest?.status === "evaluated" &&
-      latest.submissionId === normalizedSubmissionId
+      latest &&
+      ["submitted", "evaluated"].includes(latest.status) &&
+      latest.submissionId === normalizedSubmissionId &&
+      latest.result
     ) {
-      return success(res, "Typing attempt already submitted", {
-        attemptId: latest._id,
-        status: latest.status,
-        submittedAt: latest.submittedAt,
-        evaluatedAt: latest.evaluatedAt,
-        result: latest.result,
-      });
-    }
+      const savedResult = await TypingResult.findById(latest.result).lean();
 
-    if (latest?.status === "evaluated") {
-      return fail(res, 409, "This attempt has already been submitted");
-    }
-
-    if (latest?.status === "expired") {
-      return fail(res, 409, "Attempt time has expired");
+      if (savedResult) {
+        return success(res, "Typing attempt already submitted", {
+          attemptId: latest._id,
+          status: latest.status,
+          submittedAt: latest.submittedAt,
+          result: savedResult,
+        });
+      }
     }
 
     return fail(
       res,
       409,
-      "Attempt could not be submitted. Please retry if time remains.",
+      "Attempt was submitted or expired by another request",
     );
+  }
+
+  // The result model should enforce a unique index on { attempt: 1 }.
+  // This prevents multiple reports from being created for one attempt.
+  let savedResult;
+
+  try {
+    savedResult = await TypingResult.create({
+      attempt: claimedAttempt._id,
+      candidate: candidateId,
+      exam: claimedAttempt.exam,
+      report,
+      status: "finalized",
+    });
+  } catch (error) {
+    // Recover if a retry raced with result creation.
+    if (error?.code !== 11000) throw error;
+
+    savedResult = await TypingResult.findOne({
+      attempt: claimedAttempt._id,
+    });
+  }
+
+  if (!savedResult) {
+    return fail(
+      res,
+      500,
+      "Submission was accepted but the result could not be retrieved",
+    );
+  }
+
+  const finalizedAttempt = await TypingAttempt.findOneAndUpdate(
+    {
+      _id: claimedAttempt._id,
+      candidate: candidateId,
+      status: "submitted",
+      submissionId: normalizedSubmissionId,
+    },
+    {
+      $set: {
+        result: savedResult._id,
+        status: "evaluated",
+        evaluatedAt: now,
+      },
+    },
+    {
+      new: true,
+      runValidators: true,
+    },
+  );
+
+  if (!finalizedAttempt) {
+    return fail(res, 500, "Result was saved but attempt finalization failed");
   }
 
   return success(
     res,
     "Typing attempt submitted successfully",
     {
-      attemptId: savedAttempt._id,
-      examId: savedAttempt.exam,
-      status: savedAttempt.status,
-      submissionId: savedAttempt.submissionId,
-      submittedAt: savedAttempt.submittedAt,
-      evaluatedAt: savedAttempt.evaluatedAt,
-      result: savedAttempt.result,
+      attemptId: finalizedAttempt._id,
+      examId: finalizedAttempt.exam,
+      status: finalizedAttempt.status,
+      submissionId: finalizedAttempt.submissionId,
+      submittedAt: finalizedAttempt.submittedAt,
+      evaluatedAt: finalizedAttempt.evaluatedAt,
+      resultId: savedResult._id,
+      result: savedResult,
     },
     200,
   );
@@ -1544,6 +1820,7 @@ export const submitTypingAttempt = asyncHandler(async (req, res) => {
  *
  * A candidate can only retrieve their own result.
  */
+
 export const getTypingAttemptResult = asyncHandler(async (req, res) => {
   const candidateId = requireUserId(req, res);
   if (!candidateId) return;
@@ -1559,7 +1836,7 @@ export const getTypingAttemptResult = asyncHandler(async (req, res) => {
     candidate: candidateId,
   })
     .select(
-      "exam examSnapshot.title examSnapshot.language status startedAt submittedAt expiresAt result createdAt updatedAt",
+      "exam examSnapshot.config examSnapshot.name examSnapshot.language examSnapshot.targetWpm examSnapshot.durationSeconds status startedAt deadlineAt submittedAt evaluatedAt result createdAt updatedAt",
     )
     .lean();
 
@@ -1571,15 +1848,181 @@ export const getTypingAttemptResult = asyncHandler(async (req, res) => {
     return fail(res, 409, "Attempt result is not available yet");
   }
 
+  const resultDoc = await TypingResult.findOne({
+    _id: attempt.result,
+    attempt: attempt._id,
+    candidate: candidateId,
+  }).lean();
+
+  if (!resultDoc) {
+    return fail(res, 404, "Typing result not found");
+  }
+
+  const report = resultDoc.report;
+
+  if (!report?.summary) {
+    return fail(res, 409, "Typing result report is incomplete");
+  }
+
+  const summary = report.summary;
+  const qualification = report.qualification ?? {};
+  const examDetails = report.examDetails ?? {};
+  const speedTimeline = report.graph?.speedTimeline ?? [];
+
+  const safeNumber = (value) =>
+    Number.isFinite(Number(value)) ? Number(value) : 0;
+
+  const correct = safeNumber(summary.correctCharacters);
+  const incorrect = safeNumber(summary.incorrectCharacters);
+  const missed = safeNumber(summary.missedCharacters);
+  const extra = safeNumber(summary.extraCharacters);
+  const grossWpm = safeNumber(summary.grossWpm);
+  const netWpm = safeNumber(summary.netWpm);
+  const accuracy = safeNumber(summary.accuracy);
+  const targetWpm = safeNumber(
+    examDetails.targetWpm ?? attempt.examSnapshot?.targetWpm,
+  );
+
+  const graphPoints = speedTimeline
+    .map((point) => ({
+      elapsedSeconds: safeNumber(point.elapsedSeconds),
+      wpm: safeNumber(point.wpm),
+    }))
+    .sort((a, b) => a.elapsedSeconds - b.elapsedSeconds);
+
+  const observedSpeeds = graphPoints.map((point) => point.wpm);
+
+  const highestObservedWpm =
+    observedSpeeds.length > 0 ? Math.max(...observedSpeeds) : null;
+
+  const lowestObservedWpm =
+    observedSpeeds.length > 0 ? Math.min(...observedSpeeds) : null;
+
+  const averageObservedWpm =
+    observedSpeeds.length > 0
+      ? Number(
+          (
+            observedSpeeds.reduce((sum, value) => sum + value, 0) /
+            observedSpeeds.length
+          ).toFixed(2),
+        )
+      : null;
+
+  const minimumWpm = safeNumber(qualification.minimumWpm);
+  const minimumAccuracy = safeNumber(qualification.minimumAccuracy);
+
+  const graphs = [
+    {
+      id: "speed-over-time",
+      title: "Typing Speed Over Time",
+      type: "line",
+      xAxis: "elapsedSeconds",
+      yAxis: "wpm",
+      unit: "WPM",
+      available: graphPoints.length > 0,
+      data: graphPoints,
+    },
+    {
+      id: "character-distribution",
+      title: "Character Accuracy Distribution",
+      type: "doughnut",
+      unit: "characters",
+      available: correct + incorrect + missed + extra > 0,
+      data: [
+        { label: "Correct", value: correct },
+        { label: "Incorrect", value: incorrect },
+        { label: "Missed", value: missed },
+        { label: "Extra", value: extra },
+      ],
+    },
+    {
+      id: "speed-comparison",
+      title: "Typing Speed Comparison",
+      type: "bar",
+      unit: "WPM",
+      available: true,
+      data: [
+        { label: "Gross WPM", value: grossWpm },
+        { label: "Net WPM", value: netWpm },
+        { label: "Target WPM", value: targetWpm },
+        { label: "Minimum WPM", value: minimumWpm },
+      ],
+    },
+    {
+      id: "error-analysis",
+      title: "Error Analysis",
+      type: "bar",
+      unit: "characters",
+      available: true,
+      data: [
+        { label: "Incorrect", value: incorrect },
+        { label: "Missed", value: missed },
+        { label: "Extra", value: extra },
+      ],
+    },
+    {
+      id: "qualification-comparison",
+      title: "Qualification Thresholds",
+      type: "bar",
+      available: true,
+      data: [
+        {
+          label: "Actual Net WPM",
+          value: netWpm,
+          required: minimumWpm,
+          passed: netWpm >= minimumWpm,
+        },
+        {
+          label: "Actual Accuracy",
+          value: accuracy,
+          required: minimumAccuracy,
+          passed: accuracy >= minimumAccuracy,
+        },
+      ],
+    },
+  ];
+
   return success(res, "Typing attempt result retrieved successfully", {
-    attemptId: attempt._id,
-    exam: attempt.exam,
-    title: attempt.examSnapshot?.title,
-    language: attempt.examSnapshot?.language,
-    status: attempt.status,
-    startedAt: attempt.startedAt,
-    submittedAt: attempt.submittedAt,
-    result: attempt.result,
+    attempt: {
+      id: attempt._id,
+      examId: attempt.exam,
+      configId: attempt.examSnapshot?.config,
+      examName: attempt.examSnapshot?.name,
+      language: attempt.examSnapshot?.language,
+      status: attempt.status,
+      startedAt: attempt.startedAt,
+      deadlineAt: attempt.deadlineAt,
+      submittedAt: attempt.submittedAt,
+      evaluatedAt: attempt.evaluatedAt,
+    },
+
+    result: {
+      id: resultDoc._id,
+      status: resultDoc.status,
+      summary,
+      outcome: report.outcome,
+      qualification,
+      examDetails,
+      reportVersion: report.reportVersion,
+      evaluatedAt: report.evaluatedAt,
+    },
+
+    statistics: {
+      grossWpm,
+      netWpm,
+      accuracy,
+      totalErrors: safeNumber(summary.totalErrors),
+      correctCharacters: correct,
+      incorrectCharacters: incorrect,
+      missedCharacters: missed,
+      extraCharacters: extra,
+      highestObservedWpm,
+      lowestObservedWpm,
+      averageObservedWpm,
+      graphPointCount: graphPoints.length,
+    },
+
+    graphs,
   });
 });
 
@@ -1596,144 +2039,330 @@ export const getTypingAttemptResult = asyncHandler(async (req, res) => {
  * Route middleware must restrict this endpoint to authorized
  * exam-management users.
  */
+
 export const getTypingExamAnalytics = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const { from, to } = req.query;
 
   if (!isValidId(id)) {
     return fail(res, 400, "Invalid exam ID");
   }
 
+  // Accept YYYY-MM-DD or a valid ISO timestamp.
+  const parseDate = (value, fieldName) => {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`Invalid ${fieldName} date`);
+    }
+
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/u.test(value);
+    let date;
+
+    if (dateOnly) {
+      const [year, month, day] = value.split("-").map(Number);
+
+      date = new Date(Date.UTC(year, month - 1, day));
+
+      if (
+        date.getUTCFullYear() !== year ||
+        date.getUTCMonth() !== month - 1 ||
+        date.getUTCDate() !== day
+      ) {
+        throw new Error(`Invalid ${fieldName} date`);
+      }
+
+      return { date, dateOnly: true };
+    }
+
+    date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`Invalid ${fieldName} date`);
+    }
+
+    return { date, dateOnly: false };
+  };
+
+  let fromDate;
+  let toDate;
+
+  try {
+    if (from !== undefined) {
+      fromDate = parseDate(from, "from").date;
+    }
+
+    if (to !== undefined) {
+      const parsed = parseDate(to, "to");
+      toDate = parsed.date;
+
+      // A date-only "to" value includes the whole UTC calendar day.
+      if (parsed.dateOnly) {
+        toDate = new Date(toDate.getTime() + 24 * 60 * 60 * 1000);
+      }
+    }
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
+
+  if (fromDate && toDate && fromDate >= toDate) {
+    return fail(res, 400, "The to date must be after the from date");
+  }
+
   const exam = await TypingExam.findById(id)
-    .select("_id title status configSnapshot createdAt publishedAt")
+    .select(
+      "_id title status config configVersion configSnapshot createdAt publishedAt",
+    )
     .lean();
 
   if (!exam) {
     return fail(res, 404, "Exam not found");
   }
 
-  const filter = { exam: exam._id };
+  const attemptMatch = {
+    exam: exam._id,
+  };
 
-  if (req.query.from || req.query.to) {
-    filter.createdAt = {};
+  if (fromDate || toDate) {
+    attemptMatch.createdAt = {};
 
-    if (req.query.from) {
-      const from = new Date(req.query.from);
-
-      if (Number.isNaN(from.getTime())) {
-        return fail(res, 400, "Invalid from date");
-      }
-
-      filter.createdAt.$gte = from;
+    if (fromDate) {
+      attemptMatch.createdAt.$gte = fromDate;
     }
 
-    if (req.query.to) {
-      const to = new Date(req.query.to);
-
-      if (Number.isNaN(to.getTime())) {
-        return fail(res, 400, "Invalid to date");
-      }
-
-      if (filter.createdAt.$gte && to < filter.createdAt.$gte) {
-        return fail(res, 400, "The to date must be on or after from");
-      }
-
-      // Use an exclusive upper boundary at the beginning of the
-      // following day when the input is a date-only value.
-      if (/^\d{4}-\d{2}-\d{2}$/u.test(req.query.to)) {
-        to.setUTCDate(to.getUTCDate() + 1);
-      }
-
-      filter.createdAt.$lt = to;
+    if (toDate) {
+      attemptMatch.createdAt.$lt = toDate;
     }
   }
 
-  const attempts = await TypingAttempt.find(filter)
-    .select("status result startedAt submittedAt createdAt")
-    .lean();
+  const [aggregate] = await TypingAttempt.aggregate([
+    { $match: attemptMatch },
 
-  const totalAttempts = attempts.length;
+    {
+      $lookup: {
+        from: TypingResult.collection.name,
+        let: {
+          resultId: "$result",
+          attemptId: "$_id",
+        },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$_id", "$$resultId"] },
+                  { $eq: ["$attempt", "$$attemptId"] },
+                  { $eq: ["$exam", exam._id] },
+                  { $eq: ["$status", "finalized"] },
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              "report.summary.grossWpm": 1,
+              "report.summary.netWpm": 1,
+              "report.summary.accuracy": 1,
+              "report.summary.totalErrors": 1,
+              "report.qualification.passed": 1,
+              "report.outcome.passed": 1,
+            },
+          },
+        ],
+        as: "resultDocument",
+      },
+    },
 
-  const completedAttempts = attempts.filter((attempt) =>
-    ["submitted", "evaluated"].includes(attempt.status),
+    {
+      $set: {
+        resultDocument: { $first: "$resultDocument" },
+        isCompleted: {
+          $in: ["$status", ["submitted", "evaluated"]],
+        },
+        isEvaluated: {
+          $and: [
+            { $eq: ["$status", "evaluated"] },
+            { $gt: [{ $size: "$resultDocument" }, 0] },
+          ],
+        },
+      },
+    },
+
+    {
+      $set: {
+        passed: {
+          $ifNull: [
+            "$resultDocument.report.qualification.passed",
+            "$resultDocument.report.outcome.passed",
+          ],
+        },
+        grossWpm: "$resultDocument.report.summary.grossWpm",
+        netWpm: "$resultDocument.report.summary.netWpm",
+        accuracy: "$resultDocument.report.summary.accuracy",
+        totalErrors: "$resultDocument.report.summary.totalErrors",
+      },
+    },
+
+    {
+      $facet: {
+        totals: [
+          {
+            $group: {
+              _id: null,
+              totalAttempts: { $sum: 1 },
+              completedAttempts: {
+                $sum: { $cond: ["$isCompleted", 1, 0] },
+              },
+              evaluatedAttempts: {
+                $sum: { $cond: ["$isEvaluated", 1, 0] },
+              },
+              passedAttempts: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: ["$isEvaluated", { $eq: ["$passed", true] }],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              failedAttempts: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: ["$isEvaluated", { $eq: ["$passed", false] }],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              inProgressAttempts: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0],
+                },
+              },
+              expiredAttempts: {
+                $sum: { $cond: [{ $eq: ["$status", "expired"] }, 1, 0] },
+              },
+              cancelledAttempts: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0],
+                },
+              },
+              submittedWithoutResult: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$status", "submitted"] },
+                        { $eq: [{ $size: "$resultDocument" }, 0] },
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ],
+
+        performance: [
+          { $match: { isEvaluated: true } },
+          {
+            $group: {
+              _id: null,
+              averageGrossWpm: { $avg: "$grossWpm" },
+              averageNetWpm: { $avg: "$netWpm" },
+              averageAccuracy: { $avg: "$accuracy" },
+              averageErrors: { $avg: "$totalErrors" },
+              highestGrossWpm: { $max: "$grossWpm" },
+              highestNetWpm: { $max: "$netWpm" },
+              highestAccuracy: { $max: "$accuracy" },
+              lowestNetWpm: { $min: "$netWpm" },
+            },
+          },
+        ],
+
+        statusBreakdown: [
+          {
+            $group: {
+              _id: "$status",
+              count: { $sum: 1 },
+            },
+          },
+        ],
+      },
+    },
+  ]);
+
+  const totals = aggregate?.totals?.[0] ?? {};
+  const performance = aggregate?.performance?.[0] ?? {};
+
+  const round = (value) =>
+    Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
+
+  const totalAttempts = totals.totalAttempts ?? 0;
+  const completedAttempts = totals.completedAttempts ?? 0;
+  const evaluatedAttempts = totals.evaluatedAttempts ?? 0;
+  const passedAttempts = totals.passedAttempts ?? 0;
+
+  const attemptsByStatus = Object.fromEntries(
+    (aggregate?.statusBreakdown ?? []).map(({ _id, count }) => [_id, count]),
   );
 
-  const evaluatedAttempts = attempts.filter(
-    (attempt) => attempt.result != null,
-  );
-
-  const passedAttempts = evaluatedAttempts.filter(
-    (attempt) => attempt.result.passed === true,
-  );
-
-  const average = (values) => {
-    const valid = values.map(Number).filter(Number.isFinite);
-
-    if (!valid.length) return 0;
-
-    return roundTo(valid.reduce((sum, value) => sum + value, 0) / valid.length);
-  };
-
-  const results = evaluatedAttempts.map((attempt) => attempt.result);
-
-  const wpmValues = results.map((result) => result.wpm);
-  const accuracyValues = results.map((result) => result.accuracy);
-  const errorValues = results.map((result) => result.totalErrors);
-  const markValues = results.map((result) => result.marks);
-
-  const statusCounts = attempts.reduce((counts, attempt) => {
-    const status = attempt.status || "unknown";
-    counts[status] = (counts[status] || 0) + 1;
-    return counts;
-  }, {});
-
-  const analytics = {
+  return success(res, "Typing exam analytics retrieved successfully", {
     exam: {
       id: exam._id,
       title: exam.title,
       status: exam.status,
       language: exam.configSnapshot?.language ?? null,
-      configVersion: exam.configSnapshot?.version ?? null,
+      configVersion: exam.configVersion ?? exam.configSnapshot?.version ?? null,
+      publishedAt: exam.publishedAt ?? null,
     },
 
     filters: {
-      from: req.query.from ?? null,
-      to: req.query.to ?? null,
+      from: from ?? null,
+      to: to ?? null,
+      dateBasis: "attempt.createdAt",
+      timezone: "UTC",
     },
 
     counts: {
       totalAttempts,
-      completedAttempts: completedAttempts.length,
-      evaluatedAttempts: evaluatedAttempts.length,
-      passedAttempts: passedAttempts.length,
-      failedAttempts: evaluatedAttempts.length - passedAttempts.length,
-      inProgressAttempts: statusCounts.in_progress || 0,
+      completedAttempts,
+      evaluatedAttempts,
+      passedAttempts,
+      failedAttempts: totals.failedAttempts ?? 0,
+      inProgressAttempts: totals.inProgressAttempts ?? 0,
+      expiredAttempts: totals.expiredAttempts ?? 0,
+      cancelledAttempts: totals.cancelledAttempts ?? 0,
+      submittedWithoutResult: totals.submittedWithoutResult ?? 0,
     },
 
     rates: {
       completionPercentage: totalAttempts
-        ? roundTo((completedAttempts.length / totalAttempts) * 100)
+        ? round((completedAttempts / totalAttempts) * 100)
         : 0,
 
-      passPercentage: evaluatedAttempts.length
-        ? roundTo((passedAttempts.length / evaluatedAttempts.length) * 100)
+      passPercentage: evaluatedAttempts
+        ? round((passedAttempts / evaluatedAttempts) * 100)
         : 0,
     },
 
     performance: {
-      averageWpm: average(wpmValues),
-      averageAccuracy: average(accuracyValues),
-      averageErrors: average(errorValues),
-      averageMarks: average(markValues),
-      highestWpm: wpmValues.length ? Math.max(...wpmValues) : 0,
-      highestAccuracy: accuracyValues.length ? Math.max(...accuracyValues) : 0,
+      evaluatedAttempts,
+      averageGrossWpm: round(performance.averageGrossWpm),
+      averageNetWpm: round(performance.averageNetWpm),
+      averageAccuracy: round(performance.averageAccuracy),
+      averageErrors: round(performance.averageErrors),
+      highestGrossWpm: round(performance.highestGrossWpm),
+      highestNetWpm: round(performance.highestNetWpm),
+      lowestNetWpm: round(performance.lowestNetWpm),
+      highestAccuracy: round(performance.highestAccuracy),
     },
 
-    attemptsByStatus: statusCounts,
-  };
-
-  return success(
-    res,
-    "Typing exam analytics retrieved successfully",
-    analytics,
-  );
+    attemptsByStatus,
+  });
 });

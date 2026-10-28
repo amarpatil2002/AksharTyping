@@ -393,11 +393,18 @@ export const startTypingAttemptSchema = z
   })
   .strict();
 
+const speedGraphPointSchema = z
+  .object({
+    elapsedSeconds: z.number().int().min(0).max(7200),
+    wpm: z.number().min(0).max(1000),
+  })
+  .strict();
+
 export const submitTypingAttemptSchema = z
   .object({
-    typedText: z.string().max(100000),
-
-    submissionId: z.string().trim().min(8).max(100),
+    submissionId: z.string().trim().min(1).max(128),
+    typedText: z.string().max(50_000),
+    speedGraph: z.array(speedGraphPointSchema).max(5000).default([]),
   })
   .strict();
 
@@ -427,6 +434,8 @@ export const typingTimelineMetricSchema = z
 
 export const saveTypingAttemptTimelineSchema = z
   .object({
+    typedText: z.string().max(50_000).optional(),
+
     metrics: z.array(typingTimelineMetricSchema).min(1).max(1200),
   })
   .strict();
