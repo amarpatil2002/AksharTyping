@@ -2047,6 +2047,7 @@ export const getTypingExamAnalytics = asyncHandler(async (req, res) => {
   if (!isValidId(id)) {
     return fail(res, 400, "Invalid exam ID");
   }
+  c;
 
   // Accept YYYY-MM-DD or a valid ISO timestamp.
   const parseDate = (value, fieldName) => {

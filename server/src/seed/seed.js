@@ -1,41 +1,84 @@
-import "dotenv/config";
-import mongoose from "mongoose";
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const envPath = path.resolve(__dirname, "../../.env");
+const envResult = dotenv.config({ path: envPath });
+
+if (envResult.error) {
+  console.error("Failed to load .env:", envResult.error.message);
+} else {
+  console.log(".env loaded:", envPath);
+  console.log("MONGODB_URI exists:", Boolean(process.env.MONGODB_URI));
+}
+
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
+import AuthIdentity from "../models/AuthIdentity.js";
+import { connectDatabase } from "../config/database.js";
+
+dotenv.config();
 
 async function seedAdmin() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI);
+    await connectDatabase();
 
-    const username = process.env.ADMIN_USERNAME;
+    const email = process.env.ADMIN_USERNAME?.trim().toLowerCase();
     const password = process.env.ADMIN_PASSWORD;
 
-    if (!username || !password) {
-      throw new Error("ADMIN_USERNAME and ADMIN_PASSWORD must be set in .env");
+    if (!email || !password) {
+      throw new Error(
+        "ADMIN_USERNAME and ADMIN_PASSWORD must be configured in .env",
+      );
     }
 
-    const existingAdmin = await User.findOne({ username });
+    const existingUser = await User.findOne({ email });
 
-    if (existingAdmin) {
-      console.log("Admin already exists. No changes made.");
-      return;
+    if (existingUser) {
+      const existingIdentity = await AuthIdentity.findOne({
+        userId: existingUser._id,
+        provider: "password",
+      });
+
+      if (existingIdentity) {
+        console.log("Admin account already exists. No changes made.");
+        return;
+      }
+
+      throw new Error(
+        "User exists without a password identity. Manual resolution is required.",
+      );
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 12);
 
-    await User.create({
+    const user = await User.create({
       name: "Admin",
-      email: username,
-      password: hashedPassword,
+      email,
       role: "admin",
     });
 
-    console.log("Admin account created successfully.");
+    try {
+      await AuthIdentity.create({
+        userId: user._id,
+        provider: "password",
+        providerUserId: email,
+        providerEmail: email,
+        passwordHash,
+      });
+    } catch (error) {
+      // Avoid leaving an orphaned user if identity creation fails.
+      await User.deleteOne({ _id: user._id });
+      throw error;
+    }
+
+    console.log(`Admin account created successfully: ${email}`);
   } catch (error) {
     console.error("Admin seed failed:", error.message);
     process.exitCode = 1;
-  } finally {
-    await mongoose.disconnect();
   }
 }
 

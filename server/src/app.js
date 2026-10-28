@@ -3,11 +3,13 @@ import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
+import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import typingExamRoutes from "./modules/exams/typing/TypingExam.routes.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
+import { sessionMiddleware } from "./config/adminSession.js";
 
 const app = express();
 
@@ -46,8 +48,9 @@ app.get("/api/v1/health", (_req, res) => {
 });
 
 app.use("/api/v1", apiLimiter);
+app.use("/api/v1/admin/auth", sessionMiddleware);
 
-//admin routes
+app.use("/api/v1/admin/auth", adminAuthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/typing-exam", typingExamRoutes);
 
