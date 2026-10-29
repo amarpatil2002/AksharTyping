@@ -17,7 +17,6 @@ import { useAuth } from "../../auth/hooks/useAuth";
 
 const links = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { label: "Typing Practice", path: "/typing-practice", icon: Keyboard },
   { label: "Typing Exams", path: "/typing-exams", icon: GraduationCap },
   { label: "State Exams", path: "/state-exams", icon: Map },
   {

@@ -6,6 +6,10 @@ import AdminLoginPage from "../features/auth/AdminLoginPage";
 import AdminLayout from "../layouts/AdminLayout";
 import PageNotFound from "../pages/PageNotFound";
 import DashboardPage from "../features/dashboard/DashboardPage";
+import CreateConfigurationPage from "../features/typing-exam/pages/CreateConfigurationPage";
+import ConfigurationsPage from "../features/typing-exam/pages/ConfigurationPage";
+import ExamsPage from "../features/typing-exam/pages/ExamPage";
+import CreateExamPage from "../features/typing-exam/pages/CreateExamPage";
 
 function AdminDashboardPage() {
   return (
@@ -39,6 +43,26 @@ export const router = createBrowserRouter([
             index: true,
             path: "/dashboard",
             element: <DashboardPage />,
+          },
+          {
+            path: "/typing-exam",
+            element: <ExamsPage />,
+          },
+          {
+            path: "/typing-exam/create",
+            element: <CreateExamPage />,
+          },
+          {
+            path: "/typing-exam/configurations",
+            element: <ConfigurationsPage />,
+          },
+          {
+            path: "/typing-exam/configurations/create",
+            element: <CreateConfigurationPage />,
+          },
+          {
+            path: "/typing-exam/configurations/:id/edit",
+            element: <CreateConfigurationPage />,
           },
         ],
       },

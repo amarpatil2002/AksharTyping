@@ -15,6 +15,7 @@ import DashboardPage from "../modules/dashboard/pages/DashboardPage";
 import NotFoundPage from "../shared/components/NotFoundPage";
 import ForgotPasswordPage from "../modules/auth/pages/ForgotPasswordPage";
 import { ResetPasswordPage } from "../modules/auth/pages/ResetPasswordPage";
+import { TypingExamsPage } from "../modules/typing-exams/pages/TypingExamsPage";
 
 // Import admin pages when you create them.
 
@@ -78,6 +79,10 @@ export const router = createBrowserRouter([
             path: "/dashboard",
             element: <DashboardPage />,
           },
+          {
+            path: "/typing-exams",
+            element: <TypingExamsPage />,
+          },
           // Add:
           // /typing-practice
           // /typing-exams
@@ -85,26 +90,6 @@ export const router = createBrowserRouter([
           // /student-progress
           // /profile
           // /settings
-        ],
-      },
-    ],
-  },
-
-  // Admin pages: login required AND admin role required
-  {
-    element: <ProtectedRoute />,
-    children: [
-      {
-        element: <RoleRoute allowedRoles={["admin"]} />,
-        children: [
-          {
-            element: <AppLayout />,
-            children: [
-              // Add admin routes here:
-              // { path: "/admin", element: <AdminDashboardPage /> },
-              // { path: "/admin/users", element: <AdminUsersPage /> },
-            ],
-          },
         ],
       },
     ],

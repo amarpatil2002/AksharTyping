@@ -12,7 +12,11 @@ const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
 const getUserId = (req) =>
-  req.user?.id ?? req.user?._id ?? req.userId ?? req.session?.userId ?? null;
+  req.user?.id ??
+  req.user?._id ??
+  req.userId ??
+  req.session?.admin?.userId ??
+  null;
 
 const isValidId = (id) => mongoose.isValidObjectId(id);
 
@@ -59,7 +63,6 @@ const setPresentFields = (document, source, fields) => {
 
 const requireUserId = (req, res) => {
   const userId = getUserId(req);
-
   if (!userId || !isValidId(userId)) {
     fail(res, 401, "Authenticated user ID is missing or invalid");
     return null;
