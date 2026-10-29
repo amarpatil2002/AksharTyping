@@ -4,8 +4,10 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
+import adminTypingExamRoutes from "./modules/admin/typing-exam/adminTypingExam.routes.js";
+
 import authRoutes from "./modules/auth/auth.routes.js";
-import typingExamRoutes from "./modules/exams/typing/TypingExam.routes.js";
+import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
@@ -48,9 +50,13 @@ app.get("/api/v1/health", (_req, res) => {
 });
 
 app.use("/api/v1", apiLimiter);
-app.use("/api/v1/admin/auth", sessionMiddleware);
+app.use("/api/v1/admin", sessionMiddleware);
 
+//admin routes
 app.use("/api/v1/admin/auth", adminAuthRoutes);
+app.use("/api/v1/admin/typing-exam", adminTypingExamRoutes);
+
+//user routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/typing-exam", typingExamRoutes);
 

@@ -4,11 +4,12 @@ import {
   getAdminSession,
   logoutAdmin,
 } from "./adminAuth.controller.js";
+import { requireAdminSession } from "../../../middleware/requireAdminSession.js";
 
 const router = Router();
 
 router.post("/login", loginAdmin);
-router.get("/me", getAdminSession);
-router.post("/logout", logoutAdmin);
+router.get("/me", requireAdminSession, getAdminSession);
+router.post("/logout", requireAdminSession, logoutAdmin);
 
 export default router;
