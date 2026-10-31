@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import PublicLayout from "../layouts/PublicLayout";
 import AuthLayout from "../layouts/AuthLayout";
@@ -6,7 +6,6 @@ import AppLayout from "../layouts/AppLayout";
 
 import GuestRoute from "../routes/GuestRoute";
 import ProtectedRoute from "../routes/ProtectedRoute";
-import RoleRoute from "../routes/RoleRoute";
 
 import LandingPage from "../modules/landing/pages/LandingPage";
 import LoginPage from "../modules/auth/pages/LoginPage";
@@ -15,7 +14,8 @@ import DashboardPage from "../modules/dashboard/pages/DashboardPage";
 import NotFoundPage from "../shared/components/NotFoundPage";
 import ForgotPasswordPage from "../modules/auth/pages/ForgotPasswordPage";
 import { ResetPasswordPage } from "../modules/auth/pages/ResetPasswordPage";
-import { TypingExamsPage } from "../modules/typing-exams/pages/TypingExamsPage";
+import { TypingProvider } from "../modules/typing-exam/context/TypingContext";
+import { typingRoutes } from "../modules/typing-exam/routes/typing.routes";
 
 // Import admin pages when you create them.
 
@@ -80,9 +80,15 @@ export const router = createBrowserRouter([
             element: <DashboardPage />,
           },
           {
-            path: "/typing-exams",
-            element: <TypingExamsPage />,
+            path: "/",
+            element: (
+              <TypingProvider>
+                <Outlet />
+              </TypingProvider>
+            ),
+            children: typingRoutes,
           },
+
           // Add:
           // /typing-practice
           // /typing-exams

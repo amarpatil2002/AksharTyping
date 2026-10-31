@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 import { AuthProvider } from "../modules/auth/context/AuthContext";
+import { TypingProvider } from "../modules/typing-exam/context/TypingContext";
 
 interface AppProvidersProps {
   children: ReactNode;
@@ -9,8 +10,10 @@ interface AppProvidersProps {
 export function AppProviders({ children }: AppProvidersProps) {
   return (
     <AuthProvider>
-      {children}
-      <Toaster position="top-right" richColors closeButton />
+      <TypingProvider>
+        {children}
+        <Toaster position="top-right" richColors closeButton />
+      </TypingProvider>
     </AuthProvider>
   );
 }

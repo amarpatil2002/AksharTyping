@@ -1,4 +1,4 @@
-import { apiClient } from "../../services/apiClient";
+import { apiClient } from "../../services/api";
 import type { AdminAuthResponse } from "./auth.types";
 
 export interface AdminLoginPayload {

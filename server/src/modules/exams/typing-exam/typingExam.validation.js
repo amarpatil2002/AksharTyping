@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { number, z } from "zod";
 
 const objectId = z
   .string()
@@ -174,25 +174,19 @@ export const passageQuerySchema = z
 
 export const attemptQuerySchema = z
   .object({
-    ...paginationSchema,
+    page: z.coerce.number().int().min(1).default(1),
+
+    limit: z.coerce.number().int().min(1).max(100).default(20),
 
     examId: objectId.optional(),
-
-    userId: objectId.optional(),
 
     status: z
       .enum(["in_progress", "submitted", "evaluated", "expired"])
       .optional(),
 
-    from: z.coerce.date().optional(),
-
-    to: z.coerce.date().optional(),
+    sort: z.enum(["newest", "oldest"]).default("newest"),
   })
-  .strict()
-  .refine((data) => !data.from || !data.to || data.from <= data.to, {
-    message: "'from' must be before or equal to 'to'.",
-    path: ["from"],
-  });
+  .strict();
 
 // ==========================================
 // MANUAL EVALUATION
@@ -215,6 +209,7 @@ export const evaluateAttemptSchema = z
 export const examParamsSchema = z
   .object({
     examId: objectId,
+    passageId: objectId,
   })
   .strict();
 
@@ -265,11 +260,20 @@ export const userAttemptQuerySchema = z
 export const updateAttemptProgressSchema = z
   .object({
     typedText: z.string().max(100000),
+    progressVersion: z.number().int().min(0),
   })
   .strict();
 
 export const submitAttemptSchema = z
   .object({
-    typedText: z.string().max(100000).optional(),
+    typedText: z.string().max(100000),
+    progressVersion: z.number().int().min(0),
+  })
+  .strict();
+
+export const startAttemptParamsSchema = z
+  .object({
+    examId: objectId,
+    passageId: objectId,
   })
   .strict();

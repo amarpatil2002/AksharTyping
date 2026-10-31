@@ -210,6 +210,12 @@ const typingAttemptSchema = new Schema(
       type: resultSchema,
       default: () => ({}),
     },
+
+    progressVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

@@ -9,7 +9,7 @@ import { sendSuccess } from "../../../utils/sendSuccess.js";
 import { getPagination, getPaginationMeta } from "../../../utils/pagination.js";
 
 const getAuthenticatedUserId = (req) => {
-  const userId = req.user?.userId;
+  const userId = req.user?.userId || req.user?.id;
 
   if (!userId || !mongoose.isValidObjectId(userId)) {
     const error = new Error("Invalid authenticated user.");
@@ -183,7 +183,7 @@ const getAttemptRemainingSeconds = (attempt) => {
   );
 };
 
-const getAttemptResponse = (attempt) => ({
+export const getAttemptResponse = (attempt) => ({
   _id: attempt._id,
   examId: attempt.examId,
   passageId: attempt.passageId,
@@ -194,6 +194,7 @@ const getAttemptResponse = (attempt) => ({
   startedAt: attempt.startedAt,
   deadlineAt: attempt.deadlineAt,
   submittedAt: attempt.submittedAt,
+  progressVersion: attempt.progressVersion ?? 0,
   timeline: attempt.timeline,
   result: attempt.result,
   createdAt: attempt.createdAt,
@@ -346,7 +347,7 @@ export const startAttempt = asyncHandler(async (req, res) => {
   const userId = getAuthenticatedUserId(req);
   const { examId, passageId } = req.validatedParams;
 
-  // 1. Find the published exam.
+  // 1. Verify the published exam.
   const exam = await TypingExam.findOne({
     _id: examId,
     status: "published",
@@ -358,7 +359,7 @@ export const startAttempt = asyncHandler(async (req, res) => {
     return throwHttpError(404, "Published exam not found.");
   }
 
-  // 2. Find the exact published passage selected by the user.
+  // 2. Verify the selected published passage.
   const passage = await TypingPassage.findOne({
     _id: passageId,
     examId: exam._id,
@@ -372,67 +373,54 @@ export const startAttempt = asyncHandler(async (req, res) => {
     return throwHttpError(404, "Published passage not found for this exam.");
   }
 
-  // 3. Check for an existing active attempt for this exam.
+  const now = new Date();
+
+  // 3. Find the user's existing active attempt.
   const activeAttempt = await TypingAttempt.findOne({
     userId,
     examId: exam._id,
     status: "in_progress",
-  });
+  }).select("_id deadlineAt");
 
+  // 4. Abandon or expire the existing attempt.
   if (activeAttempt) {
-    const now = new Date();
+    const isExpired = now >= activeAttempt.deadlineAt;
 
-    if (now >= activeAttempt.deadlineAt) {
-      // Expire the overdue attempt atomically.
-      await TypingAttempt.updateOne(
-        {
-          _id: activeAttempt._id,
-          status: "in_progress",
-          deadlineAt: { $lte: now },
+    const updatedAttempt = await TypingAttempt.findOneAndUpdate(
+      {
+        _id: activeAttempt._id,
+        userId,
+        status: "in_progress",
+      },
+      {
+        $set: {
+          status: isExpired || "expired",
+          submittedAt: now,
+          expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
         },
-        {
-          $set: {
-            status: "expired",
-            submittedAt: now,
-          },
-        },
-      );
-    } else {
-      // Do not allow starting another passage while an attempt is active.
-      if (activeAttempt.passageId.toString() !== passage._id.toString()) {
-        return throwHttpError(
-          409,
-          "You already have an active attempt for another passage in this exam.",
-        );
-      }
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
 
-      // Resume the existing attempt.
-      return sendSuccess(
-        res,
-        "You already have an active attempt for this passage.",
-        {
-          attempt: getAttemptResponse(activeAttempt),
-          passage: {
-            title: passage.title,
-            language: passage.language,
-            content: activeAttempt.passageSnapshot,
-            wordCount: passage.wordCount,
-            difficulty: passage.difficulty,
-          },
-          remainingSeconds: getAttemptRemainingSeconds(activeAttempt),
-        },
+    if (!updatedAttempt) {
+      return throwHttpError(
+        409,
+        "Your previous attempt has changed. Please try again.",
       );
     }
   }
 
-  // 4. Set the attempt start and deadline.
+  // 5. Prepare timing for the new attempt.
   const startedAt = new Date();
 
   const deadlineAt = new Date(
     startedAt.getTime() + exam.durationSeconds * 1000,
   );
 
-  // 5. Create the attempt with immutable snapshots.
+  // 6. Create a fresh attempt.
   let attempt;
 
   try {
@@ -451,6 +439,7 @@ export const startAttempt = asyncHandler(async (req, res) => {
 
       passageSnapshot: passage.content,
       typedText: "",
+      progressVersion: 0,
       status: "in_progress",
       startedAt,
       deadlineAt,
@@ -460,19 +449,20 @@ export const startAttempt = asyncHandler(async (req, res) => {
     if (error.code === 11000) {
       return throwHttpError(
         409,
-        "An active attempt already exists for this exam.",
+        "Another attempt is being started. Please try again.",
       );
     }
 
     throw error;
   }
 
-  // 6. Return the newly started attempt and selected passage.
+  // 7. Return the new attempt and selected passage.
   return sendSuccess(
     res,
-    "Typing attempt started successfully.",
+    "Typing examination started successfully.",
     {
       attempt: getAttemptResponse(attempt),
+
       passage: {
         title: passage.title,
         language: passage.language,
@@ -480,6 +470,7 @@ export const startAttempt = asyncHandler(async (req, res) => {
         wordCount: passage.wordCount,
         difficulty: passage.difficulty,
       },
+
       remainingSeconds: exam.durationSeconds,
     },
     201,
@@ -493,9 +484,7 @@ export const getAttempts = asyncHandler(async (req, res) => {
 
   const { skip } = getPagination({ page, limit });
 
-  const filter = {
-    userId,
-  };
+  const filter = { userId };
 
   if (status) {
     filter.status = status;
@@ -513,7 +502,18 @@ export const getAttempts = asyncHandler(async (req, res) => {
   const [attempts, total] = await Promise.all([
     TypingAttempt.find(filter)
       .select(
-        "examId passageId configSnapshot.title status startedAt deadlineAt submittedAt result createdAt",
+        [
+          "_id",
+          "examId",
+          "passageId",
+          "configSnapshot.title",
+          "status",
+          "startedAt",
+          "deadlineAt",
+          "submittedAt",
+          "result",
+          "createdAt",
+        ].join(" "),
       )
       .populate({
         path: "examId",
@@ -533,34 +533,16 @@ export const getAttempts = asyncHandler(async (req, res) => {
   });
 });
 
-export const getAttemptById = asyncHandler(async (req, res) => {
-  const userId = getAuthenticatedUserId(req);
-  const { attemptId } = req.validatedParams;
-
-  const attempt = await TypingAttempt.findOne({
-    _id: attemptId,
-    userId,
-  })
-    .populate({
-      path: "examId",
-      select: "title slug language",
-    })
-    .lean();
-
-  if (!attempt) {
-    return throwHttpError(404, "Typing attempt not found.");
-  }
-
-  return sendSuccess(res, "Typing attempt fetched successfully.", {
-    attempt,
-  });
-});
-
 export const updateAttemptProgress = asyncHandler(async (req, res) => {
   const userId = getAuthenticatedUserId(req);
-  const { attemptId } = req.validatedParams;
-  const { typedText } = req.validatedBody;
 
+  const { attemptId } = req.validatedParams;
+  const { typedText, progressVersion } = req.validatedBody;
+
+  const now = new Date();
+  const RETENTION_PERIOD_MS = 24 * 60 * 60 * 1000;
+
+  // 1. Find the attempt belonging to the authenticated user.
   const attempt = await TypingAttempt.findOne({
     _id: attemptId,
     userId,
@@ -570,22 +552,27 @@ export const updateAttemptProgress = asyncHandler(async (req, res) => {
     return throwHttpError(404, "Typing attempt not found.");
   }
 
+  // 2. Verify attempt status.
   if (attempt.status !== "in_progress") {
     return throwHttpError(409, "This typing attempt is no longer active.");
   }
 
-  const now = new Date();
-
+  // 3. Enforce the server-side deadline.
   if (now >= attempt.deadlineAt) {
     await TypingAttempt.updateOne(
       {
         _id: attempt._id,
+        userId,
         status: "in_progress",
+        deadlineAt: { $lte: now },
       },
       {
         $set: {
           status: "expired",
           submittedAt: now,
+          expiresAt: new Date(
+            attempt.deadlineAt.getTime() + RETENTION_PERIOD_MS,
+          ),
         },
       },
     );
@@ -593,15 +580,35 @@ export const updateAttemptProgress = asyncHandler(async (req, res) => {
     return throwHttpError(409, "The typing attempt has expired.");
   }
 
-  const elapsedSeconds = getAttemptElapsedSeconds(attempt);
+  // 4. Check the client's progress version.
+  const currentVersion = attempt.progressVersion ?? 0;
 
+  if (progressVersion !== currentVersion) {
+    return res.status(409).json({
+      success: false,
+      message:
+        "Your progress version is outdated. Fetch the latest attempt and retry.",
+      data: {
+        currentVersion,
+      },
+    });
+  }
+
+  // 5. Calculate elapsed time using the server clock.
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((now.getTime() - attempt.startedAt.getTime()) / 1000),
+  );
+
+  // 6. Calculate typing metrics.
   const metrics = calculateTypingMetrics({
     originalText: attempt.passageSnapshot,
     typedText,
     elapsedSeconds,
-    wordLength: attempt.configSnapshot.scoring.wordLength,
+    wordLength: attempt.configSnapshot?.scoring?.wordLength ?? 5,
   });
 
+  // 7. Create timeline entry.
   const previousEntry = attempt.timeline[attempt.timeline.length - 1];
 
   const timelineEntry = createTimelineEntry(
@@ -610,17 +617,22 @@ export const updateAttemptProgress = asyncHandler(async (req, res) => {
     previousEntry,
   );
 
-  // Atomically save progress only while the attempt is active.
+  // 8. Atomically save progress.
+  // Only one request using this version can succeed.
   const updatedAttempt = await TypingAttempt.findOneAndUpdate(
     {
       _id: attempt._id,
       userId,
       status: "in_progress",
       deadlineAt: { $gt: now },
+      progressVersion: currentVersion,
     },
     {
       $set: {
         typedText,
+      },
+      $inc: {
+        progressVersion: 1,
       },
       $push: {
         timeline: {
@@ -635,27 +647,78 @@ export const updateAttemptProgress = asyncHandler(async (req, res) => {
     },
   );
 
+  // 9. Handle concurrent requests or a changed attempt state.
   if (!updatedAttempt) {
-    return throwHttpError(
-      409,
-      "The attempt has expired or is no longer active.",
-    );
+    const latestAttempt = await TypingAttempt.findOne({
+      _id: attempt._id,
+      userId,
+    })
+      .select("status progressVersion deadlineAt")
+      .lean();
+
+    if (!latestAttempt) {
+      return throwHttpError(404, "Typing attempt not found.");
+    }
+
+    if (
+      latestAttempt.status === "in_progress" &&
+      new Date() >= latestAttempt.deadlineAt
+    ) {
+      const expiryTime = new Date();
+
+      await TypingAttempt.updateOne(
+        {
+          _id: attempt._id,
+          userId,
+          status: "in_progress",
+          deadlineAt: { $lte: expiryTime },
+        },
+        {
+          $set: {
+            status: "expired",
+            submittedAt: expiryTime,
+            expiresAt: new Date(
+              latestAttempt.deadlineAt.getTime() + RETENTION_PERIOD_MS,
+            ),
+          },
+        },
+      );
+
+      return throwHttpError(409, "The typing attempt has expired.");
+    }
+
+    if (latestAttempt.status !== "in_progress") {
+      return throwHttpError(409, "This typing attempt is no longer active.");
+    }
+
+    return res.status(409).json({
+      success: false,
+      message:
+        "Another progress request was saved first. Retry using the latest version.",
+      data: {
+        currentVersion: latestAttempt.progressVersion ?? 0,
+      },
+    });
   }
 
+  // 10. Return updated progress.
   return sendSuccess(res, "Typing progress saved successfully.", {
     attemptId: updatedAttempt._id,
     status: updatedAttempt.status,
+    progressVersion: updatedAttempt.progressVersion,
     elapsedSeconds,
     remainingSeconds: getAttemptRemainingSeconds(updatedAttempt),
     metrics,
+    savedAt: updatedAttempt.updatedAt,
   });
 });
 
 export const submitAttempt = asyncHandler(async (req, res) => {
   const userId = getAuthenticatedUserId(req);
   const { attemptId } = req.validatedParams;
-  const { typedText } = req.validatedBody;
+  const { typedText, progressVersion } = req.validatedBody;
 
+  // 1. Find the user's attempt.
   const attempt = await TypingAttempt.findOne({
     _id: attemptId,
     userId,
@@ -665,77 +728,99 @@ export const submitAttempt = asyncHandler(async (req, res) => {
     return throwHttpError(404, "Typing attempt not found.");
   }
 
-  // Idempotent response for already evaluated attempts.
-  if (attempt.status === "evaluated") {
-    return sendSuccess(res, "Attempt has already been evaluated.", {
-      attemptId: attempt._id,
-      status: attempt.status,
-      result: attempt.result,
-      submittedAt: attempt.submittedAt,
-    });
+  // 2. Check attempt status.
+  if (attempt.status !== "in_progress") {
+    return throwHttpError(
+      409,
+      "This typing attempt is no longer active or has already been submitted.",
+    );
   }
 
-  if (attempt.status !== "in_progress") {
-    return throwHttpError(409, "This typing attempt cannot be submitted.");
+  // 3. Check progress version.
+  const currentVersion = attempt.progressVersion ?? 0;
+
+  if (progressVersion !== currentVersion) {
+    return throwHttpError(
+      409,
+      "Typing progress has changed. Please refresh and try again.",
+    );
   }
 
   const now = new Date();
-  const isExpired = now >= attempt.deadlineAt;
 
-  // After the deadline, use the last saved progress.
-  const finalTypedText = isExpired
-    ? attempt.typedText
-    : (typedText ?? attempt.typedText);
+  // 4. Check examination deadline.
+  if (now >= attempt.deadlineAt) {
+    const expiredAttempt = await TypingAttempt.findOneAndUpdate(
+      {
+        _id: attempt._id,
+        userId,
+        status: "in_progress",
+        progressVersion: currentVersion,
+        deadlineAt: { $lte: now },
+      },
+      {
+        $set: {
+          status: "expired",
+          submittedAt: now,
+          expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
 
-  const effectiveEndTime = new Date(
-    Math.min(now.getTime(), attempt.deadlineAt.getTime()),
-  );
+    if (!expiredAttempt) {
+      return throwHttpError(
+        409,
+        "The attempt has changed. Please refresh and try again.",
+      );
+    }
 
+    return throwHttpError(409, "The examination time has expired.");
+  }
+
+  // 5. Calculate elapsed time.
   const elapsedSeconds = Math.max(
-    0,
-    Math.floor(
-      (effectiveEndTime.getTime() - attempt.startedAt.getTime()) / 1000,
-    ),
+    1,
+    Math.floor((now.getTime() - attempt.startedAt.getTime()) / 1000),
   );
 
+  // 6. Calculate final typing metrics using submitted text.
+  // 6. Calculate final typing metrics using submitted text.
   const metrics = calculateTypingMetrics({
     originalText: attempt.passageSnapshot,
-    typedText: finalTypedText,
+    typedText,
     elapsedSeconds,
     wordLength: attempt.configSnapshot.scoring.wordLength,
   });
 
+  // 7. Calculate final examination result.
   const result = calculateAttemptResult(attempt, metrics);
 
-  const previousEntry = attempt.timeline[attempt.timeline.length - 1];
-
-  const finalTimelineEntry = createTimelineEntry(
-    metrics,
-    elapsedSeconds,
-    previousEntry,
-  );
-
-  // Conditional update prevents two concurrent submissions.
-  const updatedAttempt = await TypingAttempt.findOneAndUpdate(
+  // 8. Atomically save submitted text and final result.
+  const submittedAttempt = await TypingAttempt.findOneAndUpdate(
     {
       _id: attempt._id,
       userId,
       status: "in_progress",
+      progressVersion: currentVersion,
+      deadlineAt: { $gt: now },
     },
     {
       $set: {
-        typedText: finalTypedText,
-        submittedAt: now,
+        typedText,
         status: "evaluated",
-        result,
-      },
-      $push: {
-        timeline: {
-          $each: [finalTimelineEntry],
-          $slice: -300,
+        submittedAt: now,
+        result: {
+          ...result,
+          evaluatedAt: now,
         },
       },
-      $setOnInsert: {},
+      $inc: {
+        progressVersion: 1,
+      },
     },
     {
       new: true,
@@ -743,35 +828,490 @@ export const submitAttempt = asyncHandler(async (req, res) => {
     },
   );
 
-  if (!updatedAttempt) {
-    const latestAttempt = await TypingAttempt.findOne({
-      _id: attempt._id,
-      userId,
-    }).lean();
-
-    if (latestAttempt?.status === "evaluated") {
-      return sendSuccess(res, "Attempt has already been evaluated.", {
-        attemptId: latestAttempt._id,
-        status: latestAttempt.status,
-        result: latestAttempt.result,
-        submittedAt: latestAttempt.submittedAt,
-      });
-    }
-
+  if (!submittedAttempt) {
     return throwHttpError(
       409,
-      "The attempt has already been submitted or is no longer active.",
+      "The attempt has changed or has already been submitted. Please refresh and try again.",
     );
   }
 
-  return sendSuccess(
-    res,
-    "Typing attempt submitted and evaluated successfully.",
-    {
-      attemptId: updatedAttempt._id,
-      status: updatedAttempt.status,
-      result: updatedAttempt.result,
-      submittedAt: updatedAttempt.submittedAt,
-    },
+  // 9. Return final examination result.
+  return sendSuccess(res, "Typing examination submitted successfully.", {
+    attemptId: submittedAttempt._id,
+    status: submittedAttempt.status,
+    submittedAt: submittedAttempt.submittedAt,
+    progressVersion: submittedAttempt.progressVersion,
+    elapsedSeconds,
+    result: submittedAttempt.result,
+  });
+});
+
+const buildMinutePerformance = ({
+  timeline = [],
+  result,
+  elapsedSeconds,
+  wordLength = 5,
+}) => {
+  // 1. Sort timeline entries chronologically.
+  const points = [...timeline].sort(
+    (a, b) => a.elapsedSeconds - b.elapsedSeconds,
   );
+
+  const lastPoint = points[points.length - 1];
+
+  // 2. Add the final submission snapshot.
+  const lastRecordedErrors = lastPoint
+    ? lastPoint.incorrectCharacters +
+      lastPoint.missedCharacters +
+      lastPoint.extraCharacters
+    : 0;
+
+  const finalPoint = {
+    elapsedSeconds,
+    typedCharacters: result.totalCharacters,
+    correctCharacters: result.correctCharacters,
+    incorrectCharacters: result.incorrectCharacters,
+    missedCharacters: result.missedCharacters,
+    extraCharacters: result.extraCharacters,
+    errorsInInterval: Math.max(0, result.totalErrors - lastRecordedErrors),
+  };
+
+  const finalPointAlreadyExists =
+    lastPoint &&
+    lastPoint.elapsedSeconds === finalPoint.elapsedSeconds &&
+    lastPoint.typedCharacters === finalPoint.typedCharacters &&
+    lastPoint.correctCharacters === finalPoint.correctCharacters;
+
+  if (!finalPointAlreadyExists) {
+    points.push(finalPoint);
+  }
+
+  // 3. Prepare minute buckets.
+  const minuteMap = new Map();
+
+  const getMinuteBucket = (minute) => {
+    if (!minuteMap.has(minute)) {
+      minuteMap.set(minute, {
+        minute,
+        label: `Minute ${minute}`,
+        durationSeconds: 0,
+        charactersTyped: 0,
+        correctCharacters: 0,
+        errors: 0,
+      });
+    }
+
+    return minuteMap.get(minute);
+  };
+
+  // 4. Distribute each autosave interval into its corresponding minutes.
+  let previous = {
+    elapsedSeconds: 0,
+    typedCharacters: 0,
+    correctCharacters: 0,
+  };
+
+  for (const point of points) {
+    const startSeconds = previous.elapsedSeconds;
+    const endSeconds = point.elapsedSeconds;
+
+    const intervalDuration = endSeconds - startSeconds;
+
+    if (intervalDuration <= 0) {
+      previous = {
+        elapsedSeconds: point.elapsedSeconds,
+        typedCharacters: point.typedCharacters,
+        correctCharacters: point.correctCharacters,
+      };
+
+      continue;
+    }
+
+    const charactersAdded = Math.max(
+      0,
+      point.typedCharacters - previous.typedCharacters,
+    );
+
+    const correctAdded = Math.max(
+      0,
+      point.correctCharacters - previous.correctCharacters,
+    );
+
+    const errorsAdded = Math.max(0, point.errorsInInterval || 0);
+
+    let cursor = startSeconds;
+
+    while (cursor < endSeconds) {
+      const minute = Math.floor(cursor / 60) + 1;
+      const minuteBoundary = minute * 60;
+
+      const segmentEnd = Math.min(endSeconds, minuteBoundary);
+
+      const segmentDuration = segmentEnd - cursor;
+      const proportion = segmentDuration / intervalDuration;
+
+      const bucket = getMinuteBucket(minute);
+
+      bucket.durationSeconds += segmentDuration;
+
+      bucket.charactersTyped += charactersAdded * proportion;
+
+      bucket.correctCharacters += correctAdded * proportion;
+
+      bucket.errors += errorsAdded * proportion;
+
+      cursor = segmentEnd;
+    }
+
+    previous = {
+      elapsedSeconds: point.elapsedSeconds,
+      typedCharacters: point.typedCharacters,
+      correctCharacters: point.correctCharacters,
+    };
+  }
+
+  // 5. Calculate minute-wise performance.
+  const minutes = [...minuteMap.values()]
+    .sort((a, b) => a.minute - b.minute)
+    .map((item) => {
+      const durationMinutes = item.durationSeconds / 60;
+
+      const grossWpm =
+        durationMinutes > 0
+          ? item.charactersTyped / wordLength / durationMinutes
+          : 0;
+
+      const netWpm =
+        durationMinutes > 0
+          ? Math.max(0, grossWpm - item.errors / wordLength / durationMinutes)
+          : 0;
+
+      const accuracy =
+        item.charactersTyped > 0
+          ? (item.correctCharacters / item.charactersTyped) * 100
+          : 0;
+
+      return {
+        minute: item.minute,
+        label: item.label,
+
+        durationSeconds: Number(item.durationSeconds.toFixed(2)),
+
+        charactersTyped: Number(item.charactersTyped.toFixed(2)),
+
+        correctCharacters: Number(item.correctCharacters.toFixed(2)),
+
+        errors: Number(item.errors.toFixed(2)),
+
+        grossWpm: Number(grossWpm.toFixed(2)),
+        netWpm: Number(netWpm.toFixed(2)),
+        accuracy: Number(accuracy.toFixed(2)),
+      };
+    });
+
+  // 6. Calculate speed changes between consecutive minutes.
+  minutes.forEach((item, index) => {
+    const previousMinute = minutes[index - 1];
+
+    const speedChange = previousMinute
+      ? Number((item.netWpm - previousMinute.netWpm).toFixed(2))
+      : 0;
+
+    item.speedChange = speedChange;
+
+    item.speedTrend = !previousMinute
+      ? "initial"
+      : speedChange > 0
+        ? "increased"
+        : speedChange < 0
+          ? "decreased"
+          : "stable";
+  });
+
+  // 7. Find the best and worst performing minutes.
+  const getHighest = (key) =>
+    minutes.reduce(
+      (best, current) => (!best || current[key] > best[key] ? current : best),
+      null,
+    );
+
+  const getLowest = (key) =>
+    minutes.reduce(
+      (best, current) => (!best || current[key] < best[key] ? current : best),
+      null,
+    );
+
+  const fastestMinute = getHighest("netWpm");
+
+  const slowestMinute = getLowest("netWpm");
+
+  const highestAccuracyMinute = getHighest("accuracy");
+
+  const lowestAccuracyMinute = getLowest("accuracy");
+
+  const mostErrorsMinute = getHighest("errors");
+
+  const biggestImprovement = minutes.reduce(
+    (best, current) =>
+      current.speedChange > 0 &&
+      (!best || current.speedChange > best.speedChange)
+        ? current
+        : best,
+    null,
+  );
+
+  const biggestDecline = minutes.reduce(
+    (worst, current) =>
+      current.speedChange < 0 &&
+      (!worst || current.speedChange < worst.speedChange)
+        ? current
+        : worst,
+    null,
+  );
+
+  return {
+    minutes,
+
+    insights: {
+      fastestMinute,
+      slowestMinute,
+      highestAccuracyMinute,
+      lowestAccuracyMinute,
+      mostErrorsMinute,
+      biggestImprovement,
+      biggestDecline,
+    },
+  };
+};
+
+export const getAttemptResult = asyncHandler(async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const { attemptId } = req.validatedParams;
+
+  // 1. Fetch the evaluated attempt.
+  const attempt = await TypingAttempt.findOne({
+    _id: attemptId,
+    userId,
+  })
+    .select(
+      [
+        "_id",
+        "examId",
+        "passageId",
+        "status",
+        "configSnapshot",
+        "startedAt",
+        "deadlineAt",
+        "submittedAt",
+        "result",
+        "timeline",
+        "createdAt",
+      ].join(" "),
+    )
+    .populate({
+      path: "examId",
+      select: "title slug language",
+    })
+    .populate({
+      path: "passageId",
+      select: "title language wordCount difficulty",
+    })
+    .lean();
+
+  if (!attempt) {
+    return throwHttpError(404, "Typing attempt not found.");
+  }
+
+  // 2. Verify that the result is available.
+  if (attempt.status !== "evaluated" || !attempt.result) {
+    return throwHttpError(409, "The examination result is not available yet.");
+  }
+
+  const result = attempt.result;
+
+  const scoring = attempt.configSnapshot?.scoring || {};
+
+  const wordLength = scoring.wordLength || 5;
+
+  // 3. Calculate examination duration.
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor(
+      (new Date(attempt.submittedAt).getTime() -
+        new Date(attempt.startedAt).getTime()) /
+        1000,
+    ),
+  );
+
+  // 4. Build minute-wise performance.
+  const minutePerformance = buildMinutePerformance({
+    timeline: attempt.timeline || [],
+    result,
+    elapsedSeconds,
+    wordLength,
+  });
+
+  // 5. Build performance timeline for line charts.
+  const performanceTimeline = (attempt.timeline || []).map((entry) => ({
+    elapsedSeconds: entry.elapsedSeconds,
+    typedCharacters: entry.typedCharacters,
+    correctCharacters: entry.correctCharacters,
+    incorrectCharacters: entry.incorrectCharacters,
+    missedCharacters: entry.missedCharacters,
+    extraCharacters: entry.extraCharacters,
+    grossWpm: entry.grossWpm,
+    netWpm: entry.netWpm,
+    accuracy: entry.accuracy,
+    errorsInInterval: entry.errorsInInterval,
+  }));
+
+  // 6. Add final result to performance timeline.
+  const lastTimelinePoint = performanceTimeline[performanceTimeline.length - 1];
+
+  const hasFinalPoint =
+    lastTimelinePoint &&
+    lastTimelinePoint.elapsedSeconds === elapsedSeconds &&
+    lastTimelinePoint.typedCharacters === result.totalCharacters &&
+    lastTimelinePoint.correctCharacters === result.correctCharacters;
+
+  if (!hasFinalPoint) {
+    performanceTimeline.push({
+      elapsedSeconds,
+      typedCharacters: result.totalCharacters,
+      correctCharacters: result.correctCharacters,
+      incorrectCharacters: result.incorrectCharacters,
+      missedCharacters: result.missedCharacters,
+      extraCharacters: result.extraCharacters,
+      grossWpm: result.grossWpm,
+      netWpm: result.netWpm,
+      accuracy: result.accuracy,
+      errorsInInterval: 0,
+    });
+  }
+
+  // 7. Character distribution for pie/doughnut charts.
+  const characterBreakdown = [
+    {
+      label: "Correct characters",
+      value: result.correctCharacters,
+    },
+    {
+      label: "Incorrect characters",
+      value: result.incorrectCharacters,
+    },
+    {
+      label: "Missed characters",
+      value: result.missedCharacters,
+    },
+    {
+      label: "Extra characters",
+      value: result.extraCharacters,
+    },
+  ];
+
+  // 8. Error distribution for bar charts.
+  const errorBreakdown = [
+    {
+      label: "Incorrect",
+      value: result.incorrectCharacters,
+    },
+    {
+      label: "Missed",
+      value: result.missedCharacters,
+    },
+    {
+      label: "Extra",
+      value: result.extraCharacters,
+    },
+  ];
+
+  // 9. Summary cards.
+  const percentage =
+    result.maximumMarks > 0
+      ? Number(((result.marks / result.maximumMarks) * 100).toFixed(2))
+      : 0;
+
+  const summary = {
+    totalCharacters: result.totalCharacters,
+    correctCharacters: result.correctCharacters,
+    incorrectCharacters: result.incorrectCharacters,
+    missedCharacters: result.missedCharacters,
+    extraCharacters: result.extraCharacters,
+    totalErrors: result.totalErrors,
+
+    grossWpm: result.grossWpm,
+    netWpm: result.netWpm,
+    accuracy: result.accuracy,
+
+    marks: result.marks,
+    maximumMarks: result.maximumMarks,
+    percentage,
+
+    passed: result.passed,
+  };
+
+  // 10. Examination requirements and comparison.
+  const requirements = {
+    targetWpm: attempt.configSnapshot?.targetWpm ?? 0,
+
+    minimumWpm: scoring.minimumWpm ?? 0,
+
+    minimumAccuracy: scoring.minimumAccuracy ?? 0,
+
+    achievedWpm: result.netWpm,
+
+    achievedAccuracy: result.accuracy,
+
+    wpmRequirementMet: result.netWpm >= (scoring.minimumWpm ?? 0),
+
+    accuracyRequirementMet: result.accuracy >= (scoring.minimumAccuracy ?? 0),
+  };
+
+  // 11. Return complete examination analytics.
+  return sendSuccess(res, "Typing examination result fetched successfully.", {
+    attempt: {
+      attemptId: attempt._id,
+      status: attempt.status,
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt,
+      deadlineAt: attempt.deadlineAt,
+      elapsedSeconds,
+      durationSeconds: attempt.configSnapshot?.durationSeconds ?? 0,
+    },
+
+    exam: attempt.examId,
+
+    passage: attempt.passageId,
+
+    scoringConfiguration: {
+      method: scoring.method,
+      wordLength,
+      minimumWpm: scoring.minimumWpm,
+      minimumAccuracy: scoring.minimumAccuracy,
+      errorPenalty: scoring.errorPenalty,
+      targetWpm: attempt.configSnapshot?.targetWpm ?? 0,
+    },
+
+    summary,
+
+    requirements,
+
+    charts: {
+      // WPM and accuracy over elapsed time.
+      performanceTimeline,
+
+      // Minute-wise speed, accuracy and errors.
+      minutePerformance: minutePerformance.minutes,
+
+      // Pie and doughnut charts.
+      characterBreakdown,
+
+      // Error comparison bar chart.
+      errorBreakdown,
+    },
+
+    performanceInsights: minutePerformance.insights,
+
+    result,
+  });
 });
