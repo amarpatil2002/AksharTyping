@@ -18,7 +18,7 @@ import type {
   TypingResultResponse,
 } from "../types/typing.types";
 
-const BASE_URL = "/api/v1";
+const BASE_URL = "/api/v1/";
 
 // ==========================================
 // PUBLISHED EXAMS
