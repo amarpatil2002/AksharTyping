@@ -1,9 +1,10 @@
-export function validateRequest(schema) {
+export function validateRequest(schema, target = "body") {
   return (req, res, next) => {
-    const result = schema.safeParse(req.body);
+    const result = schema.safeParse(req[target]);
 
     if (!result.success) {
       return res.status(400).json({
+        success: false,
         message: "Validation failed.",
         errors: result.error.issues.map((issue) => ({
           field: issue.path.join("."),
@@ -12,7 +13,8 @@ export function validateRequest(schema) {
       });
     }
 
-    req.validatedBody = result.data;
+    req[`validated${target[0].toUpperCase()}${target.slice(1)}`] = result.data;
+
     next();
   };
 }

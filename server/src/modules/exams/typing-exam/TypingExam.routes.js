@@ -1,59 +1,81 @@
 import { Router } from "express";
-import { verifyToken } from "../../../middleware/verifyToken.js";
 
 import {
-  startTypingAttempt,
-  saveTypingAttemptTimeline,
-  submitTypingAttempt,
-  getTypingAttemptResult,
+  getPublishedExams,
+  getPublishedExamById,
+  getExamPassages,
+  startAttempt,
+  getAttempts,
+  getAttemptById,
+  updateAttemptProgress,
+  submitAttempt,
 } from "./TypingExam.controller.js";
 
 import {
-  validate,
-  attemptIdParamSchema,
-  startTypingAttemptSchema,
-  submitTypingAttemptSchema,
-  saveTypingAttemptTimelineSchema,
+  examParamsSchema,
+  examQuerySchema,
+  passageQuerySchema,
+  attemptParamsSchema,
+  attemptQuerySchema,
+  updateAttemptProgressSchema,
+  submitAttemptSchema,
 } from "./typingExam.validation.js";
+
+import { verifyToken } from "../../../middleware/verifyToken.js";
+import { validateRequest } from "../../../middleware/validateRequest.js";
 
 const router = Router();
 
-/* =====================================================
-   TYPING ATTEMPT ROUTES
-===================================================== */
+// Authenticate using access token.
+router.use(verifyToken);
 
-// Start attempt
-router.post(
-  "/attempts/start",
-  verifyToken,
-  validate(startTypingAttemptSchema),
-  startTypingAttempt,
+// Published exams
+router.get("/", validateRequest(examQuerySchema, "query"), getPublishedExams);
+
+router.get(
+  "/:examId",
+  validateRequest(examParamsSchema, "params"),
+  getPublishedExamById,
 );
 
-// Save periodic typing metrics
-router.post(
-  "/attempts/:attemptId/timeline",
-  verifyToken,
-  validate(attemptIdParamSchema, "params"),
-  validate(saveTypingAttemptTimelineSchema),
-  saveTypingAttemptTimeline,
+router.get(
+  "/:examId/passages",
+  validateRequest(examParamsSchema, "params"),
+  validateRequest(passageQuerySchema, "query"),
+  getExamPassages,
 );
 
-// Submit attempt
+// Typing attempts
+router.post(
+  "/:examId/passages/:passageId/start",
+  validateRequest(examParamsSchema, "params"),
+  startAttempt,
+);
+
+router.get(
+  "/attempts",
+  validateRequest(attemptQuerySchema, "query"),
+  getAttempts,
+);
+
+router.get(
+  "/attempts/:attemptId",
+  validateRequest(attemptParamsSchema, "params"),
+  getAttemptById,
+);
+
+router.patch(
+  "/attempts/:attemptId/progress",
+  validateRequest(attemptParamsSchema, "params"),
+  validateRequest(updateAttemptProgressSchema),
+  updateAttemptProgress,
+);
+
 router.post(
   "/attempts/:attemptId/submit",
-  verifyToken,
-  validate(attemptIdParamSchema, "params"),
-  validate(submitTypingAttemptSchema),
-  submitTypingAttempt,
-);
-
-// Get attempt result
-router.get(
-  "/attempts/:attemptId/result",
-  verifyToken,
-  validate(attemptIdParamSchema, "params"),
-  getTypingAttemptResult,
+  validateRequest(attemptParamsSchema, "params"),
+  validateRequest(submitAttemptSchema),
+  submitAttempt,
 );
 
 export default router;

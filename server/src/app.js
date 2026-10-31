@@ -4,7 +4,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
-import adminTypingExamRoutes from "./modules/admin/typing-exam/adminTypingExam.routes.js";
+import adminTypingExamRoutes from "./modules/exams/typing-exam/adminTypingExam.routes.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
 import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";
@@ -60,12 +60,58 @@ app.use("/api/v1/admin/typing-exam", adminTypingExamRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/typing-exam", typingExamRoutes);
 
-app.use((_req, res) =>
-  res.status(404).json({
+app.use((err, req, res, next) => {
+  console.error("API Error:", err);
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  // Custom HTTP errors (404, 409, etc.).
+  if (err.statusCode) {
+    return res.status(err.statusCode).json({
+      success: false,
+      message: err.message,
+    });
+  }
+
+  // Duplicate key error.
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyPattern || {})[0];
+
+    return res.status(409).json({
+      success: false,
+      message: "A record with this value already exists.",
+      field: field || null,
+    });
+  }
+
+  // Mongoose validation error.
+  if (err.name === "ValidationError") {
+    return res.status(400).json({
+      success: false,
+      message: "Database validation failed.",
+      errors: Object.values(err.errors).map((error) => ({
+        field: error.path,
+        message: error.message,
+      })),
+    });
+  }
+
+  // Invalid MongoDB ObjectId.
+  if (err.name === "CastError") {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid resource identifier.",
+    });
+  }
+
+  // Default server error.
+  return res.status(500).json({
     success: false,
-    message: "Route not found.",
-  }),
-);
+    message: "Internal server error.",
+  });
+});
 
 app.use(errorHandler);
 
