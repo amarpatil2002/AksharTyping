@@ -2,10 +2,11 @@ import type { RouteObject } from "react-router-dom";
 
 import TypingExamListPage from "../pages/TypingExamListPage";
 import TypingExamDetailPage from "../pages/TypingExamDetailPage";
-// import TypingPassagesPage from "../pages/TypingPassagesPage";
-// import TypingTestPage from "../pages/TypingTestPage";
+import TypingPassagesPage from "../pages/TypingPassagesPage";
+import TypingTestPage from "../pages/TypingTestPage";
+import TypingExamSetupPage from "../pages/TypingExamSetupPage";
 // import TypingAttemptHistoryPage from "../pages/TypingAttemptHistoryPage";
-// import TypingResultPage from "../pages/TypingResultPage";
+import TypingResultPage from "../pages/TypingResultPage";
 
 export const typingRoutes: RouteObject[] = [
   // Published examination list
@@ -21,16 +22,18 @@ export const typingRoutes: RouteObject[] = [
   },
 
   // Examination passages
-  //   {
-  //     path: ":examId/passages",
-  //     element: <TypingPassagesPage />,
-  //   },
-
-  //   // Start and complete typing examination
-  //   {
-  //     path: ":examId/passages/:passageId/start",
-  //     element: <TypingTestPage />,
-  //   },
+  {
+    path: ":examId/passages",
+    element: <TypingPassagesPage />,
+  },
+  {
+    path: ":examId/passages/:passageId/setup",
+    element: <TypingExamSetupPage />,
+  },
+  {
+    path: ":examId/passages/:passageId/start",
+    element: <TypingTestPage />,
+  },
 
   //   // User attempt history
   //   {
@@ -39,8 +42,8 @@ export const typingRoutes: RouteObject[] = [
   //   },
 
   //   // Examination result
-  //   {
-  //     path: "attempts/:attemptId/result",
-  //     element: <TypingResultPage />,
-  //   },
+  {
+    path: "attempts/:attemptId/result",
+    element: <TypingResultPage />,
+  },
 ];

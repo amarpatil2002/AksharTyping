@@ -1,4 +1,10 @@
-import { createContext, useCallback, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   getPublishedExams,
@@ -93,11 +99,18 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
 
   const [examFilters, setExamFilters] = useState<TypingExamFilters>({
     page: 1,
-    limit: 20,
-    sort: "newest",
+    limit: 100,
+    sort: "asc",
   });
 
+  const examFiltersRef = useRef(examFilters);
+
   const [examListLoading, setExamListLoading] = useState(false);
+
+  const examRequestId = useRef(0);
+
+  // Keep latest filters available to stable callbacks.
+  examFiltersRef.current = examFilters;
 
   // ==========================================
   // EXAM DETAIL STATE
@@ -122,6 +135,10 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
     limit: 20,
   });
 
+  const passageFiltersRef = useRef(passageFilters);
+
+  passageFiltersRef.current = passageFilters;
+
   const [passageListLoading, setPassageListLoading] = useState(false);
 
   // ==========================================
@@ -134,28 +151,39 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
   // FETCH EXAMS
   // ==========================================
 
-  const fetchExams = useCallback(
-    async (filters: TypingExamFilters = examFilters) => {
-      try {
-        setExamListLoading(true);
-        setError(null);
+  const fetchExams = useCallback(async (filters?: TypingExamFilters) => {
+    const appliedFilters = filters ?? examFiltersRef.current;
 
-        const response = await getPublishedExams(filters);
+    const requestId = ++examRequestId.current;
 
+    try {
+      setExamListLoading(true);
+      setError(null);
+
+      const response = await getPublishedExams(appliedFilters);
+
+      // Ignore older responses if a newer request exists.
+      if (requestId === examRequestId.current) {
         setExams(response.exams);
         setExamPagination(response.pagination);
-        setExamFilters(filters);
 
-        return response;
-      } catch (error) {
+        examFiltersRef.current = appliedFilters;
+        setExamFilters(appliedFilters);
+      }
+
+      return response;
+    } catch (error) {
+      if (requestId === examRequestId.current) {
         setError(getErrorMessage(error));
-        throw error;
-      } finally {
+      }
+
+      throw error;
+    } finally {
+      if (requestId === examRequestId.current) {
         setExamListLoading(false);
       }
-    },
-    [examFilters],
-  );
+    }
+  }, []);
 
   // ==========================================
   // FETCH EXAM DETAILS
@@ -184,16 +212,20 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
   // ==========================================
 
   const fetchPassages = useCallback(
-    async (examId: MongoId, filters: TypingPassageFilters = passageFilters) => {
+    async (examId: MongoId, filters?: TypingPassageFilters) => {
+      const appliedFilters = filters ?? passageFiltersRef.current;
+
       try {
         setPassageListLoading(true);
         setError(null);
 
-        const response = await getExamPassages(examId, filters);
+        const response = await getExamPassages(examId, appliedFilters);
 
         setPassages(response.passages);
         setPassagePagination(response.pagination);
-        setPassageFilters(filters);
+
+        passageFiltersRef.current = appliedFilters;
+        setPassageFilters(appliedFilters);
 
         return response;
       } catch (error) {
@@ -203,7 +235,7 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
         setPassageListLoading(false);
       }
     },
-    [passageFilters],
+    [],
   );
 
   // ==========================================
@@ -212,22 +244,34 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
 
   const updateExamFilters = useCallback(
     (filters: Partial<TypingExamFilters>) => {
-      setExamFilters((previous) => ({
-        ...previous,
-        ...filters,
-        page: filters.page ?? 1,
-      }));
+      setExamFilters((previous) => {
+        const updated = {
+          ...previous,
+          ...filters,
+          page: filters.page ?? 1,
+        };
+
+        examFiltersRef.current = updated;
+
+        return updated;
+      });
     },
     [],
   );
 
   const updatePassageFilters = useCallback(
     (filters: Partial<TypingPassageFilters>) => {
-      setPassageFilters((previous) => ({
-        ...previous,
-        ...filters,
-        page: filters.page ?? 1,
-      }));
+      setPassageFilters((previous) => {
+        const updated = {
+          ...previous,
+          ...filters,
+          page: filters.page ?? 1,
+        };
+
+        passageFiltersRef.current = updated;
+
+        return updated;
+      });
     },
     [],
   );
@@ -239,6 +283,10 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
   const clearError = useCallback(() => {
     setError(null);
   }, []);
+
+  // ==========================================
+  // PROVIDER
+  // ==========================================
 
   return (
     <TypingContext.Provider

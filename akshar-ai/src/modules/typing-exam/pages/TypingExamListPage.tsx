@@ -1,33 +1,50 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+
 import ExamList from "../components/ExamList";
 import useTyping from "../hooks/useTyping";
 
 const TypingExamListPage = () => {
-  const {
-    exams,
-    examPagination,
-    examFilters,
-    examListLoading,
-    error,
-    fetchExams,
-    updateExamFilters,
-  } = useTyping();
+  const { exams, examPagination, examListLoading, error, fetchExams } =
+    useTyping();
+
+  // Prevent duplicate initial requests during the mounted lifetime.
+  const initialFetchDone = useRef(false);
+
+  // ==========================================
+  // INITIAL FETCH
+  // ==========================================
 
   useEffect(() => {
-    fetchExams().catch(() => {});
+    if (initialFetchDone.current) return;
+
+    initialFetchDone.current = true;
+
+    fetchExams({
+      page: 1,
+      limit: 100,
+      sort: "asc",
+    }).catch((error) => {
+      console.error("Failed to fetch typing exams:", error);
+    });
   }, [fetchExams]);
 
-  const handleSearch = (value: string) => {
-    updateExamFilters({ search: value || undefined });
-  };
-
-  const handleLanguageChange = (value: string) => {
-    updateExamFilters({ language: value || undefined });
-  };
+  // ==========================================
+  // PAGINATION
+  // ==========================================
 
   const handlePageChange = (page: number) => {
-    fetchExams({ ...examFilters, page }).catch(() => {});
+    fetchExams({
+      page,
+      limit: 100,
+      sort: "asc",
+    }).catch((error) => {
+      console.error("Failed to fetch typing exams:", error);
+    });
   };
+
+  // ==========================================
+  // UI
+  // ==========================================
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -39,27 +56,6 @@ const TypingExamListPage = () => {
         <p className="mt-2 text-gray-600">
           Improve your typing speed and accuracy with our examinations.
         </p>
-      </div>
-
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row">
-        <input
-          type="search"
-          placeholder="Search examinations..."
-          defaultValue={examFilters.search ?? ""}
-          onChange={(event) => handleSearch(event.target.value)}
-          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 outline-none focus:border-blue-500 sm:max-w-md"
-        />
-
-        <select
-          value={examFilters.language ?? ""}
-          onChange={(event) => handleLanguageChange(event.target.value)}
-          className="rounded-lg border border-gray-300 px-4 py-2.5 outline-none focus:border-blue-500"
-        >
-          <option value="">All languages</option>
-          <option value="en">English</option>
-          <option value="hi">Hindi</option>
-          <option value="mr">Marathi</option>
-        </select>
       </div>
 
       <ExamList exams={exams} loading={examListLoading} error={error} />

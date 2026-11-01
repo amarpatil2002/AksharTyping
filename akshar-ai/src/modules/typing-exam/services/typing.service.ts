@@ -18,7 +18,11 @@ import type {
   TypingResultResponse,
 } from "../types/typing.types";
 
-const BASE_URL = "/api/v1";
+// ==========================================
+// BASE URL
+// ==========================================
+
+const BASE_URL = "/api/v1/typing-exam";
 
 // ==========================================
 // PUBLISHED EXAMS
@@ -29,13 +33,15 @@ export const getPublishedExams = async (
 ): Promise<TypingExamListResponse> => {
   const response = await api.get<ApiResponse<TypingExamListResponse>>(
     BASE_URL,
-    {
-      params: filters,
-    },
+    { params: filters },
   );
 
   return response.data.data;
 };
+
+// ==========================================
+// SINGLE EXAM DETAILS
+// ==========================================
 
 export const getPublishedExamById = async (
   examId: MongoId,

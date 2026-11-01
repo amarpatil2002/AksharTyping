@@ -22,7 +22,7 @@ export interface PaginationParams {
 // EXAM TYPES
 // ==========================================
 
-export type TypingExamSort = "newest" | "oldest" | "title_asc" | "title_desc";
+export type TypingExamSort = "asc" | "desc";
 
 export interface TypingScoring {
   method: "standard" | "net_wpm" | "accuracy" | "custom";
@@ -71,6 +71,7 @@ export type TypingPassageDifficulty = "easy" | "medium" | "hard";
 export interface TypingPassage {
   _id: MongoId;
   title: string;
+  content: string;
   language: string;
   wordCount: number;
   difficulty: TypingPassageDifficulty;

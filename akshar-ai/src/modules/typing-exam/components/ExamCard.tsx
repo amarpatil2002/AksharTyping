@@ -63,7 +63,7 @@ const ExamCard = ({ exam }: ExamCardProps) => {
 
       <button
         type="button"
-        onClick={() => navigate(`/typing-exam/${exam._id}`)}
+        onClick={() => navigate(`/typing-exams/${exam._id}`)}
         className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
       >
         View Examination

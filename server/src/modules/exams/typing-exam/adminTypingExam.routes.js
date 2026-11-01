@@ -12,11 +12,8 @@ import {
   updatePassageStatusSchema,
   objectIdSchema,
   passageParamsSchema,
-  attemptParamsSchema,
   examQuerySchema,
   passageQuerySchema,
-  attemptQuerySchema,
-  evaluateAttemptSchema,
 } from "../../exams/typing-exam/typingExam.validation.js";
 
 import {
@@ -32,9 +29,6 @@ import {
   updatePassage,
   updatePassageStatus,
   deletePassage,
-  getAttempts,
-  getAttemptById,
-  evaluateAttempt,
   getTypingDashboard,
 } from "./adminTypingExam.controller.js";
 

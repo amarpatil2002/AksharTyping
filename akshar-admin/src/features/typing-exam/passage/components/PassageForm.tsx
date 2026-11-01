@@ -1,13 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-import type {
-  TypingPassageDifficulty,
-  TypingPassageStatus,
+import {
+  LANGUAGES,
+  type TypingPassageLanguage,
+  type TypingPassageDifficulty,
+  type TypingPassageStatus,
 } from "../types/passage.types";
 
 export interface PassageFormValues {
   title: string;
-  language: string;
+  language: TypingPassageLanguage;
   content: string;
   difficulty: TypingPassageDifficulty;
   status: TypingPassageStatus;
@@ -18,6 +20,7 @@ interface PassageFormProps {
   onSubmit: (values: PassageFormValues) => Promise<void>;
   submitText: string;
   submitting: boolean;
+  isEdit?: boolean;
 }
 
 interface PassageFormErrors {
@@ -30,17 +33,21 @@ const getFormValues = (
   values?: Partial<PassageFormValues>,
 ): PassageFormValues => ({
   title: values?.title ?? "",
-  language: values?.language ?? "en",
+  language: values?.language ?? "english",
   content: values?.content ?? "",
   difficulty: values?.difficulty ?? "easy",
   status: values?.status ?? "draft",
 });
+
+const formatLanguage = (language: string) =>
+  language.charAt(0).toUpperCase() + language.slice(1);
 
 const PassageForm = ({
   initialValues,
   onSubmit,
   submitText,
   submitting,
+  isEdit = false,
 }: PassageFormProps) => {
   const [values, setValues] = useState<PassageFormValues>(() =>
     getFormValues(initialValues),
@@ -53,7 +60,10 @@ const PassageForm = ({
     setErrors({});
   }, [initialValues]);
 
-  const handleChange = (field: keyof PassageFormValues, value: string) => {
+  const handleChange = <K extends keyof PassageFormValues>(
+    field: K,
+    value: PassageFormValues[K],
+  ) => {
     setValues((previous) => ({
       ...previous,
       [field]: value,
@@ -70,9 +80,11 @@ const PassageForm = ({
 
     if (!values.title.trim()) {
       newErrors.title = "Passage title is required.";
+    } else if (values.title.trim().length < 3) {
+      newErrors.title = "Title must contain at least 3 characters.";
     }
 
-    if (!values.language.trim()) {
+    if (!values.language) {
       newErrors.language = "Language is required.";
     }
 
@@ -93,17 +105,21 @@ const PassageForm = ({
     await onSubmit({
       ...values,
       title: values.title.trim(),
-      language: values.language.trim(),
       content: values.content.trim(),
     });
   };
 
+  const wordCount = values.content.trim()
+    ? values.content.trim().split(/\s+/).length
+    : 0;
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-5">
+      {/* Passage Title */}
       <div>
         <label
           htmlFor="title"
-          className="mb-2 block text-sm font-medium text-gray-700"
+          className="mb-1.5 block text-sm font-medium text-gray-700"
         >
           Passage Title <span className="text-red-500">*</span>
         </label>
@@ -114,7 +130,8 @@ const PassageForm = ({
           value={values.title}
           onChange={(event) => handleChange("title", event.target.value)}
           placeholder="Enter passage title"
-          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          disabled={submitting}
+          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
         />
 
         {errors.title && (
@@ -122,10 +139,11 @@ const PassageForm = ({
         )}
       </div>
 
+      {/* Language */}
       <div>
         <label
           htmlFor="language"
-          className="mb-2 block text-sm font-medium text-gray-700"
+          className="mb-1.5 block text-sm font-medium text-gray-700"
         >
           Language <span className="text-red-500">*</span>
         </label>
@@ -133,53 +151,67 @@ const PassageForm = ({
         <select
           id="language"
           value={values.language}
-          onChange={(event) => handleChange("language", event.target.value)}
-          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          disabled={isEdit || submitting}
+          onChange={(event) =>
+            handleChange(
+              "language",
+              event.target.value as TypingPassageLanguage,
+            )
+          }
+          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
         >
-          <option value="en">English</option>
-          <option value="hi">Hindi</option>
-          <option value="mr">Marathi</option>
+          {LANGUAGES.map((language) => (
+            <option key={language} value={language}>
+              {formatLanguage(language)}
+            </option>
+          ))}
         </select>
+
+        {isEdit && (
+          <p className="mt-1.5 text-xs text-gray-500">
+            Language cannot be changed after passage creation.
+          </p>
+        )}
 
         {errors.language && (
           <p className="mt-1 text-sm text-red-600">{errors.language}</p>
         )}
       </div>
 
+      {/* Passage Content */}
       <div>
-        <label
-          htmlFor="content"
-          className="mb-2 block text-sm font-medium text-gray-700"
-        >
-          Passage Content <span className="text-red-500">*</span>
-        </label>
+        <div className="mb-1.5 flex items-center justify-between">
+          <label
+            htmlFor="content"
+            className="text-sm font-medium text-gray-700"
+          >
+            Passage Content <span className="text-red-500">*</span>
+          </label>
+
+          <span className="text-xs text-gray-500">{wordCount} words</span>
+        </div>
 
         <textarea
           id="content"
           rows={10}
           value={values.content}
+          disabled={submitting}
           onChange={(event) => handleChange("content", event.target.value)}
           placeholder="Enter the typing passage content..."
-          className="w-full resize-y rounded-lg border border-gray-300 px-4 py-3 text-sm leading-6 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          className="w-full resize-y rounded-lg border border-gray-300 px-4 py-3 text-sm leading-6 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
         />
 
         {errors.content && (
           <p className="mt-1 text-sm text-red-600">{errors.content}</p>
         )}
-
-        <p className="mt-1 text-xs text-gray-500">
-          Words:{" "}
-          {values.content.trim()
-            ? values.content.trim().split(/\s+/).length
-            : 0}
-        </p>
       </div>
 
+      {/* Difficulty and Status */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         <div>
           <label
             htmlFor="difficulty"
-            className="mb-2 block text-sm font-medium text-gray-700"
+            className="mb-1.5 block text-sm font-medium text-gray-700"
           >
             Difficulty
           </label>
@@ -187,13 +219,14 @@ const PassageForm = ({
           <select
             id="difficulty"
             value={values.difficulty}
+            disabled={submitting}
             onChange={(event) =>
               handleChange(
                 "difficulty",
                 event.target.value as TypingPassageDifficulty,
               )
             }
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
           >
             <option value="easy">Easy</option>
             <option value="medium">Medium</option>
@@ -204,7 +237,7 @@ const PassageForm = ({
         <div>
           <label
             htmlFor="status"
-            className="mb-2 block text-sm font-medium text-gray-700"
+            className="mb-1.5 block text-sm font-medium text-gray-700"
           >
             Status
           </label>
@@ -212,10 +245,11 @@ const PassageForm = ({
           <select
             id="status"
             value={values.status}
+            disabled={submitting}
             onChange={(event) =>
               handleChange("status", event.target.value as TypingPassageStatus)
             }
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
           >
             <option value="draft">Draft</option>
             <option value="published">Published</option>
@@ -224,6 +258,7 @@ const PassageForm = ({
         </div>
       </div>
 
+      {/* Submit */}
       <div className="flex justify-end border-t border-gray-200 pt-5">
         <button
           type="submit"

@@ -1,6 +1,7 @@
 import type {
   TypingPassage,
   TypingPassageStatus,
+  TypingPassageLanguage,
 } from "../types/passage.types";
 
 interface PassageTableProps {
@@ -11,6 +12,9 @@ interface PassageTableProps {
   onStatusChange: (id: string, status: TypingPassageStatus) => void;
   updatingStatusId: string | null;
 }
+
+const formatLanguage = (language: TypingPassageLanguage) =>
+  language.charAt(0).toUpperCase() + language.slice(1);
 
 const PassageTable = ({
   passages,
@@ -32,7 +36,6 @@ const PassageTable = ({
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
         <p className="font-medium text-gray-800">No passages added yet</p>
-
         <p className="mt-1 text-sm text-gray-500">
           Add your first passage to this examination.
         </p>
@@ -46,6 +49,7 @@ const PassageTable = ({
         <thead className="bg-gray-50 text-xs uppercase text-gray-500">
           <tr>
             <th className="px-5 py-4">Title</th>
+            <th className="px-5 py-4">Language</th>
             <th className="px-5 py-4">Difficulty</th>
             <th className="px-5 py-4">Words</th>
             <th className="px-5 py-4">Status</th>
@@ -60,13 +64,16 @@ const PassageTable = ({
                 {passage.title}
               </td>
 
+              <td className="px-5 py-4 text-gray-600">
+                {formatLanguage(passage.language)}
+              </td>
+
               <td className="px-5 py-4 capitalize text-gray-600">
                 {passage.difficulty}
               </td>
 
               <td className="px-5 py-4 text-gray-600">{passage.wordCount}</td>
 
-              {/* Status */}
               <td className="px-5 py-4">
                 <select
                   value={passage.status}
@@ -91,7 +98,6 @@ const PassageTable = ({
                 </select>
               </td>
 
-              {/* Actions */}
               <td className="px-5 py-4">
                 <div className="flex gap-3">
                   <button

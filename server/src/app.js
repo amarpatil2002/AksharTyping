@@ -9,7 +9,7 @@ import adminTypingExamRoutes from "./modules/exams/typing-exam/adminTypingExam.r
 import authRoutes from "./modules/auth/auth.routes.js";
 import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";
 
-import { errorHandler } from "./middleware/errorHandler.js";
+import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
 import { sessionMiddleware } from "./config/adminSession.js";
 
@@ -49,7 +49,7 @@ app.get("/api/v1/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.use("/api/v1", apiLimiter);
+// app.use("/api/v1", apiLimiter);
 app.use("/api/v1/admin", sessionMiddleware);
 
 //admin routes

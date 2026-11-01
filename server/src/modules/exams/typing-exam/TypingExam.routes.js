@@ -20,6 +20,7 @@ import {
   attemptQuerySchema,
   updateAttemptProgressSchema,
   submitAttemptSchema,
+  examPassageParamsSchema,
 } from "./typingExam.validation.js";
 
 import { verifyToken } from "../../../middleware/verifyToken.js";

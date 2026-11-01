@@ -1,52 +1,77 @@
 import mongoose from "mongoose";
 
-import { TypingExam } from "../../../models/typing/TypingExam.js";
-import { TypingPassage } from "../../../models/typing/TypingPassage.js";
-import { TypingAttempt } from "../../../models/typing/TypingAttempt.js";
+import TypingExam from "../../../models/typing/TypingExam.js";
+import TypingPassage from "../../../models/typing/TypingPassage.js";
+import TypingAttempt from "../../../models/typing/TypingAttempt.js";
 
-import { asyncHandler } from "../../../utils/asyncHandler.js";
+import asyncHandler from "../../../utils/asyncHandler.js";
+import { getPagination, getPaginationMeta } from "../../../utils/pagination.js";
+import { sendSuccess } from "../../../utils/sendSuccess.js";
 
 // ==========================================
-// HELPERS
+// COMMON HELPERS
 // ==========================================
 
-const sendSuccess = (res, message, data = null, status = 200) => {
-  return res.status(status).json({
-    success: true,
-    message,
-    ...(data !== null && { data }),
-  });
+const EXAM_SELECT_FIELDS = [
+  "title",
+  "slug",
+  "description",
+  "language",
+  "durationSeconds",
+  "targetWpm",
+  "maximumMarks",
+  "passingPercentage",
+  "scoring",
+  "instructions",
+  "status",
+  "createdBy",
+  "updatedBy",
+  "createdAt",
+  "updatedAt",
+].join(" ");
+
+const validateAdmin = (adminId) => {
+  return adminId && mongoose.isValidObjectId(adminId);
 };
 
-const getPagination = (query) => {
-  const page = query.page;
-  const limit = query.limit;
+const validateWeightedScoring = (scoring) => {
+  if (scoring?.method !== "weighted") {
+    return null;
+  }
 
-  return {
-    page,
-    limit,
-    skip: (page - 1) * limit,
-  };
+  const speedWeight = Number(scoring.speedWeight);
+  const accuracyWeight = Number(scoring.accuracyWeight);
+
+  if (
+    !Number.isFinite(speedWeight) ||
+    !Number.isFinite(accuracyWeight) ||
+    Math.abs(speedWeight + accuracyWeight - 100) > 0.001
+  ) {
+    return "Speed weight and accuracy weight must total 100 for weighted scoring.";
+  }
+
+  return null;
 };
 
-const getPaginationMeta = (page, limit, total) => ({
-  page,
-  limit,
-  total,
-  totalPages: Math.ceil(total / limit),
-  hasNextPage: page * limit < total,
-  hasPreviousPage: page > 1,
+const getDefaultScoring = (scoring = {}) => ({
+  method: scoring.method ?? "standard",
+  wordLength: scoring.wordLength ?? 5,
+  minimumWpm: scoring.minimumWpm ?? 0,
+  minimumAccuracy: scoring.minimumAccuracy ?? 0,
+  errorPenalty: scoring.errorPenalty ?? 0,
+  speedWeight: scoring.speedWeight ?? 50,
+  accuracyWeight: scoring.accuracyWeight ?? 50,
 });
 
 // ==========================================
-// EXAM CRUD
+// CREATE EXAM
+// POST /exams
 // ==========================================
 
-// POST /exams
 export const createExam = asyncHandler(async (req, res) => {
   const adminId = req.session?.admin?.userId;
 
-  if (!adminId || !mongoose.isValidObjectId(adminId)) {
+  if (!validateAdmin(adminId)) {
     return res.status(401).json({
       success: false,
       message: "Admin authentication required.",
@@ -72,8 +97,29 @@ export const createExam = asyncHandler(async (req, res) => {
     });
   }
 
+  const scoring = getDefaultScoring(payload.scoring);
+
+  const scoringError = validateWeightedScoring(scoring);
+
+  if (scoringError) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid scoring configuration.",
+      errors: [
+        {
+          field: "scoring",
+          message: scoringError,
+        },
+      ],
+    });
+  }
+
   const exam = await TypingExam.create({
     ...payload,
+    language: payload.language ?? "english",
+    maximumMarks: payload.maximumMarks ?? 100,
+    passingPercentage: payload.passingPercentage ?? 40,
+    scoring,
     createdBy: adminId,
   });
 
@@ -86,13 +132,16 @@ export const createExam = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// GET ALL EXAMS
 // GET /exams
+// ==========================================
+
 export const getExams = asyncHandler(async (req, res) => {
   const { page, limit, search, status, language, sort } = req.validatedQuery;
 
   const { skip } = getPagination(req.validatedQuery);
 
-  // Build filters.
   const filter = {};
 
   if (status) {
@@ -107,8 +156,18 @@ export const getExams = asyncHandler(async (req, res) => {
     const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     filter.$or = [
-      { title: { $regex: escapedSearch, $options: "i" } },
-      { slug: { $regex: escapedSearch, $options: "i" } },
+      {
+        title: {
+          $regex: escapedSearch,
+          $options: "i",
+        },
+      },
+      {
+        slug: {
+          $regex: escapedSearch,
+          $options: "i",
+        },
+      },
     ];
   }
 
@@ -116,9 +175,7 @@ export const getExams = asyncHandler(async (req, res) => {
 
   const [exams, total] = await Promise.all([
     TypingExam.find(filter)
-      .select(
-        "title slug description language durationSeconds targetWpm scoring instructions status createdBy updatedBy createdAt updatedAt",
-      )
+      .select(EXAM_SELECT_FIELDS)
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email")
       .sort({
@@ -138,14 +195,16 @@ export const getExams = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// GET EXAM BY ID
 // GET /exams/:examId
+// ==========================================
+
 export const getExamById = asyncHandler(async (req, res) => {
   const { examId } = req.validatedParams;
 
   const exam = await TypingExam.findById(examId)
-    .select(
-      "title slug description language durationSeconds targetWpm scoring instructions status createdBy updatedBy createdAt updatedAt",
-    )
+    .select(EXAM_SELECT_FIELDS)
     .populate("createdBy", "name email")
     .populate("updatedBy", "name email")
     .lean();
@@ -230,21 +289,25 @@ export const getExamById = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// UPDATE EXAM
 // PATCH /exams/:examId
+// ==========================================
+
 export const updateExam = asyncHandler(async (req, res) => {
   const { examId } = req.validatedParams;
   const adminId = req.session?.admin?.userId;
   const payload = req.validatedBody;
 
-  // 1. Validate admin identity.
-  if (!adminId || !mongoose.isValidObjectId(adminId)) {
+  // Validate admin.
+  if (!validateAdmin(adminId)) {
     return res.status(401).json({
       success: false,
       message: "Admin authentication required.",
     });
   }
 
-  // 2. Find existing exam.
+  // Find existing exam.
   const exam = await TypingExam.findById(examId);
 
   if (!exam) {
@@ -254,7 +317,7 @@ export const updateExam = asyncHandler(async (req, res) => {
     });
   }
 
-  // 3. Prevent duplicate slug.
+  // Prevent duplicate slug.
   if (payload.slug && payload.slug !== exam.slug) {
     const slugExists = await TypingExam.exists({
       slug: payload.slug,
@@ -275,15 +338,17 @@ export const updateExam = asyncHandler(async (req, res) => {
     }
   }
 
-  // 4. Check whether attempts already exist.
+  // Check existing attempts.
   const hasAttempts = await TypingAttempt.exists({
     examId,
   });
 
-  // 5. Protect historical exam configuration.
+  // Protect historical exam configuration.
   const restrictedFields = [
     "durationSeconds",
     "targetWpm",
+    "maximumMarks",
+    "passingPercentage",
     "scoring",
     "language",
   ];
@@ -298,6 +363,7 @@ export const updateExam = asyncHandler(async (req, res) => {
         success: false,
         message:
           "Exam configuration cannot be changed after attempts have been created.",
+
         errors: modifiedRestrictedFields.map((field) => ({
           field,
           message: "This field is locked because exam attempts already exist.",
@@ -306,17 +372,49 @@ export const updateExam = asyncHandler(async (req, res) => {
     }
   }
 
-  // 6. Apply validated updates.
-  for (const [key, value] of Object.entries(payload)) {
+  // Prepare updates.
+  const updates = { ...payload };
+
+  // Merge nested scoring configuration.
+  if (payload.scoring) {
+    const existingScoring =
+      exam.scoring?.toObject?.() ??
+      exam.scoring?.toJSON?.() ??
+      exam.scoring ??
+      {};
+
+    const mergedScoring = {
+      ...existingScoring,
+      ...payload.scoring,
+    };
+
+    const scoringError = validateWeightedScoring(mergedScoring);
+
+    if (scoringError) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid scoring configuration.",
+        errors: [
+          {
+            field: "scoring",
+            message: scoringError,
+          },
+        ],
+      });
+    }
+
+    updates.scoring = mergedScoring;
+  }
+
+  // Apply updates.
+  for (const [key, value] of Object.entries(updates)) {
     exam.set(key, value);
   }
 
   exam.updatedBy = adminId;
 
-  // 7. Validate and save.
   await exam.save();
 
-  // 8. Populate audit information.
   await exam.populate([
     {
       path: "createdBy",
@@ -328,19 +426,22 @@ export const updateExam = asyncHandler(async (req, res) => {
     },
   ]);
 
-  // 9. Return response.
   return sendSuccess(res, "Typing exam updated successfully.", {
     exam,
   });
 });
 
+// ==========================================
+// UPDATE EXAM STATUS
 // PATCH /exams/:examId/status
+// ==========================================
+
 export const updateExamStatus = asyncHandler(async (req, res) => {
   const { examId } = req.validatedParams;
   const { status } = req.validatedBody;
   const adminId = req.session?.admin?.userId;
 
-  // 1. Verify admin session.
+  // 1. Validate admin.
   if (!adminId || !mongoose.isValidObjectId(adminId)) {
     return res.status(401).json({
       success: false,
@@ -358,35 +459,33 @@ export const updateExamStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  // 3. Avoid unnecessary database updates.
+  // 3. Avoid unnecessary updates.
   if (exam.status === status) {
-    return sendSuccess(res, "Exam already has the requested status.", {
-      exam,
-    });
+    return sendSuccess(res, "Exam already has the requested status.", { exam });
   }
 
-  // 4. Publishing requires at least one published passage.
+  // 4. Publishing requires at least one passage.
   if (status === "published") {
-    const publishedPassageExists = await TypingPassage.exists({
+    const passageCount = await TypingPassage.countDocuments({
       examId,
-      status: "published",
+      status: { $in: ["draft", "published"] },
     });
 
-    if (!publishedPassageExists) {
+    if (passageCount === 0) {
       return res.status(409).json({
         success: false,
-        message: "Cannot publish an exam without published passages.",
+        message: "Cannot publish an exam without passages.",
         errors: [
           {
             field: "status",
-            message: "Publish at least one passage before publishing the exam.",
+            message: "Create at least one passage before publishing the exam.",
           },
         ],
       });
     }
   }
 
-  // 5. Optional: prevent archiving while attempts are active.
+  // 5. Prevent archiving while attempts are active.
   if (status === "archived") {
     const activeAttemptExists = await TypingAttempt.exists({
       examId,
@@ -401,13 +500,13 @@ export const updateExamStatus = asyncHandler(async (req, res) => {
     }
   }
 
-  // 6. Update exam.
+  // 6. Update exam status.
   exam.status = status;
   exam.updatedBy = adminId;
 
   await exam.save();
 
-  // 7. Populate audit fields.
+  // 7. Populate audit information.
   await exam.populate([
     {
       path: "createdBy",
@@ -419,88 +518,69 @@ export const updateExamStatus = asyncHandler(async (req, res) => {
     },
   ]);
 
-  return sendSuccess(res, "Exam status updated successfully.", {
-    exam,
-  });
+  // 8. Return response.
+  return sendSuccess(res, "Exam status updated successfully.", { exam });
 });
 
+// ==========================================
+// DELETE EXAM
 // DELETE /exams/:examId
+// ==========================================
+
 export const deleteExam = asyncHandler(async (req, res) => {
   const { examId } = req.validatedParams;
   const adminId = req.session?.admin?.userId;
 
-  // 1. Verify admin session.
-  if (!adminId || !mongoose.isValidObjectId(adminId)) {
+  // 1. Validate admin.
+  if (!validateAdmin(adminId)) {
     return res.status(401).json({
       success: false,
       message: "Admin authentication required.",
     });
   }
 
-  // 2. Start transaction.
-  const session = await mongoose.startSession();
+  // 2. Find exam.
+  const exam = await TypingExam.findById(examId);
 
-  try {
-    let deletedExam = false;
-    let deletedPassages = 0;
-
-    await session.withTransaction(async () => {
-      // 3. Find exam.
-      const exam = await TypingExam.findById(examId).session(session);
-
-      if (!exam) {
-        const error = new Error("Typing exam not found.");
-        error.statusCode = 404;
-        throw error;
-      }
-
-      // 4. Protect historical attempts.
-      const attemptExists = await TypingAttempt.exists({
-        examId,
-      }).session(session);
-
-      if (attemptExists) {
-        const error = new Error(
-          "Cannot delete an exam with existing attempts. Archive it instead.",
-        );
-
-        error.statusCode = 409;
-        throw error;
-      }
-
-      // 5. Delete associated passages.
-      const passageResult = await TypingPassage.deleteMany(
-        { examId },
-        { session },
-      );
-
-      deletedPassages = passageResult.deletedCount;
-
-      // 6. Delete exam.
-      await exam.deleteOne({ session });
-
-      deletedExam = true;
+  if (!exam) {
+    return res.status(404).json({
+      success: false,
+      message: "Typing exam not found.",
     });
-
-    if (!deletedExam) {
-      return res.status(409).json({
-        success: false,
-        message: "Exam deletion could not be completed.",
-      });
-    }
-
-    // 7. Success response.
-    return sendSuccess(
-      res,
-      "Exam and associated passages deleted successfully.",
-      {
-        examId,
-        deletedPassages,
-      },
-    );
-  } finally {
-    await session.endSession();
   }
+
+  // 3. Protect historical attempts.
+  const attemptExists = await TypingAttempt.exists({
+    examId,
+  });
+
+  if (attemptExists) {
+    return res.status(409).json({
+      success: false,
+      message:
+        "Cannot delete an exam with existing attempts. Archive it instead.",
+    });
+  }
+
+  // 4. Delete associated passages.
+  const passageResult = await TypingPassage.deleteMany({
+    examId,
+  });
+
+  const deletedPassages = passageResult.deletedCount ?? 0;
+
+  // 5. Delete exam.
+  await exam.deleteOne();
+
+  // 6. Return success.
+  return sendSuccess(
+    res,
+    "Exam and associated passages deleted successfully.",
+    {
+      examId,
+      deletedPassages,
+    },
+  );
 });
 
 // ==========================================
@@ -582,12 +662,14 @@ export const getPassages = asyncHandler(async (req, res) => {
 
   const { skip } = getPagination(req.validatedQuery);
 
-  // 1. Verify exam existence.
-  const examExists = await TypingExam.exists({
-    _id: examId,
-  });
+  // 1. Fetch exam and its scoring configuration.
+  const exam = await TypingExam.findById(examId)
+    .select(
+      "title slug language durationSeconds targetWpm maximumMarks passingPercentage scoring",
+    )
+    .lean();
 
-  if (!examExists) {
+  if (!exam) {
     return res.status(404).json({
       success: false,
       message: "Typing exam not found.",
@@ -600,7 +682,7 @@ export const getPassages = asyncHandler(async (req, res) => {
   };
 
   if (language) {
-    filter.language = language.toLowerCase();
+    filter.language = language;
   }
 
   if (difficulty) {
@@ -623,7 +705,7 @@ export const getPassages = asyncHandler(async (req, res) => {
   // 4. Sorting.
   const sortOrder = sort === "asc" ? 1 : -1;
 
-  // 5. Execute database queries concurrently.
+  // 5. Execute queries concurrently.
   const [passages, total] = await Promise.all([
     TypingPassage.find(filter)
       .select(
@@ -644,6 +726,7 @@ export const getPassages = asyncHandler(async (req, res) => {
 
   // 6. Return response.
   return sendSuccess(res, "Passages fetched successfully.", {
+    exam,
     passages,
     pagination: getPaginationMeta(page, limit, total),
   });
@@ -653,7 +736,21 @@ export const getPassages = asyncHandler(async (req, res) => {
 export const getPassageById = asyncHandler(async (req, res) => {
   const { examId, passageId } = req.validatedParams;
 
-  // 1. Find passage belonging to the requested exam.
+  // 1. Fetch exam and scoring configuration.
+  const exam = await TypingExam.findById(examId)
+    .select(
+      "title slug language durationSeconds targetWpm maximumMarks passingPercentage scoring",
+    )
+    .lean();
+
+  if (!exam) {
+    return res.status(404).json({
+      success: false,
+      message: "Typing exam not found.",
+    });
+  }
+
+  // 2. Find passage belonging to the requested exam.
   const passage = await TypingPassage.findOne({
     _id: passageId,
     examId,
@@ -665,7 +762,7 @@ export const getPassageById = asyncHandler(async (req, res) => {
     .populate("updatedBy", "name email")
     .lean();
 
-  // 2. Handle missing passage.
+  // 3. Handle missing passage.
   if (!passage) {
     return res.status(404).json({
       success: false,
@@ -673,8 +770,9 @@ export const getPassageById = asyncHandler(async (req, res) => {
     });
   }
 
-  // 3. Return response.
+  // 4. Return response.
   return sendSuccess(res, "Passage fetched successfully.", {
+    exam,
     passage,
   });
 });
@@ -865,30 +963,26 @@ export const updatePassageStatus = asyncHandler(async (req, res) => {
 
 // DELETE /exams/:examId/passages/:passageId
 export const deletePassage = asyncHandler(async (req, res) => {
-  const { examId, passageId } = req.validatedParams;
   const adminId = req.session?.admin?.userId;
 
-  // 1. Verify admin.
-  if (!adminId || !mongoose.isValidObjectId(adminId)) {
+  if (!validateAdmin(adminId)) {
     return res.status(401).json({
       success: false,
-      message: "Admin authentication required.",
+      message: "Unauthorized. Admin access required.",
     });
   }
 
-  // 2. Verify exam.
-  const examExists = await TypingExam.exists({
-    _id: examId,
-  });
+  const { examId, passageId } = req.validatedParams;
 
-  if (!examExists) {
+  const exam = await TypingExam.findById(examId).select("_id");
+
+  if (!exam) {
     return res.status(404).json({
       success: false,
-      message: "Typing exam not found.",
+      message: "Typing examination not found.",
     });
   }
 
-  // 3. Find passage belonging to exam.
   const passage = await TypingPassage.findOne({
     _id: passageId,
     examId,
@@ -897,143 +991,15 @@ export const deletePassage = asyncHandler(async (req, res) => {
   if (!passage) {
     return res.status(404).json({
       success: false,
-      message: "Passage not found for the specified exam.",
+      message: "Passage not found for this examination.",
     });
   }
 
-  // 4. Protect historical attempts.
-  const attemptExists = await TypingAttempt.exists({
-    passageId,
-  });
-
-  if (attemptExists) {
-    return res.status(409).json({
-      success: false,
-      message:
-        "Cannot delete a passage associated with existing attempts. Archive it instead.",
-    });
-  }
-
-  // 5. Delete passage.
   await passage.deleteOne();
 
   return sendSuccess(res, "Passage deleted successfully.", {
-    passageId,
     examId,
-  });
-});
-
-// ==========================================
-// USER SIDE PANEL
-// ==========================================
-
-// GET /attempts
-export const getAttempts = asyncHandler(async (req, res) => {
-  const { page, limit, examId, userId, status, from, to, sort } =
-    req.validatedQuery;
-
-  const { skip } = getPagination(req.validatedQuery);
-
-  const filter = {};
-
-  if (examId) filter.examId = examId;
-  if (userId) filter.userId = userId;
-  if (status) filter.status = status;
-
-  if (from || to) {
-    filter.createdAt = {};
-
-    if (from) filter.createdAt.$gte = from;
-    if (to) filter.createdAt.$lte = to;
-  }
-
-  const [attempts, total] = await Promise.all([
-    TypingAttempt.find(filter)
-      .select("-typedText -passageSnapshot -timeline -configSnapshot")
-      .sort({ createdAt: sort === "asc" ? 1 : -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("userId", "name email")
-      .populate("examId", "title slug")
-      .populate("passageId", "title difficulty")
-      .lean(),
-
-    TypingAttempt.countDocuments(filter),
-  ]);
-
-  return sendSuccess(res, "Attempts fetched successfully.", {
-    attempts,
-    pagination: getPaginationMeta(page, limit, total),
-  });
-});
-
-// GET /attempts/:attemptId
-export const getAttemptById = asyncHandler(async (req, res) => {
-  const { attemptId } = req.validatedParams;
-
-  const attempt = await TypingAttempt.findById(attemptId)
-    .populate("userId", "name email")
-    .populate("examId", "title slug")
-    .populate("passageId", "title difficulty")
-    .lean();
-
-  if (!attempt) {
-    return res.status(404).json({
-      success: false,
-      message: "Typing attempt not found.",
-    });
-  }
-
-  return sendSuccess(res, "Attempt fetched successfully.", {
-    attempt,
-  });
-});
-
-// PATCH /attempts/:attemptId/evaluate
-export const evaluateAttempt = asyncHandler(async (req, res) => {
-  const { attemptId } = req.validatedParams;
-
-  const { marks, maximumMarks, passed } = req.validatedBody;
-
-  // Only submitted attempts can be manually evaluated.
-  const attempt = await TypingAttempt.findOneAndUpdate(
-    {
-      _id: attemptId,
-      status: "submitted",
-    },
-    {
-      $set: {
-        "result.marks": marks,
-        "result.maximumMarks": maximumMarks,
-        "result.passed": passed,
-        "result.evaluatedAt": new Date(),
-        status: "evaluated",
-      },
-    },
-    {
-      new: true,
-      runValidators: true,
-    },
-  );
-
-  if (!attempt) {
-    const existing = await TypingAttempt.findById(attemptId).select("status");
-
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        message: "Typing attempt not found.",
-      });
-    }
-
-    return res.status(409).json({
-      success: false,
-      message: `Cannot evaluate an attempt with status '${existing.status}'.`,
-    });
-  }
-
-  return sendSuccess(res, "Attempt evaluated successfully.", {
-    attempt,
+    passageId,
   });
 });
 

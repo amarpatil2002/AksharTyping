@@ -1,4 +1,5 @@
 import { useContext } from "react";
+
 import { TypingContext } from "../context/TypingContext";
 
 const useTyping = () => {

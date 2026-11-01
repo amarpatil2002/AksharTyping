@@ -1,12 +1,25 @@
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "../modules/dashboard/components/Sidebar";
 
 export default function AppLayout() {
-  return (
-    <div className="min-h-screen bg-slate-50">
-      <Sidebar />
+  const location = useLocation();
 
-      <main className="min-h-screen pt-16 lg:ml-72 lg:pt-0">
+  // Detect the active typing test, whether the URL uses
+  // /typing-exam or /typing-exams.
+  const isTypingExamRunning =
+    /\/typing-exams?\/.*\/passages\/.*\/start\/?$/i.test(location.pathname);
+
+  return (
+    <div className="min-h-screen w-full bg-slate-50">
+      {!isTypingExamRunning && <Sidebar />}
+
+      <main
+        className={
+          isTypingExamRunning
+            ? "min-h-screen w-full"
+            : "min-h-screen w-full pt-16 lg:ml-72 lg:w-[calc(100%-18rem)] lg:pt-0"
+        }
+      >
         <Outlet />
       </main>
     </div>

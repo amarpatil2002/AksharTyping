@@ -80,7 +80,7 @@ export const router = createBrowserRouter([
             element: <DashboardPage />,
           },
           {
-            path: "/",
+            path: "/typing-exams",
             element: (
               <TypingProvider>
                 <Outlet />
