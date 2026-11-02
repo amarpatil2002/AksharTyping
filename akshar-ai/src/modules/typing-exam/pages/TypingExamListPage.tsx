@@ -31,7 +31,7 @@ const TypingExamListPage = () => {
     if (initialFetchDone.current) return;
 
     initialFetchDone.current = true;
-    fetchExams({ page: 1, limit: 100, sort: "asc" });
+    fetchExams({ page: 1, limit: 100, sort: "title_asc" });
   }, [fetchExams]);
 
   const filteredExams = useMemo(() => {
@@ -162,7 +162,9 @@ const TypingExamListPage = () => {
               <p className="text-sm font-medium text-red-600">{error}</p>
               <button
                 type="button"
-                onClick={() => fetchExams({ page: 1, limit: 100, sort: "asc" })}
+                onClick={() =>
+                  fetchExams({ page: 1, limit: 100, sort: "title_asc" })
+                }
                 className="mt-4 rounded-lg bg-[#155EEF] px-4 py-2 text-sm font-semibold text-white hover:bg-[#004EEB]"
               >
                 Try again

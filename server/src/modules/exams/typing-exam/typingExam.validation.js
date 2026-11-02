@@ -195,3 +195,60 @@ export const examPassageParamsSchema = z
     passageId: objectIdSchema,
   })
   .strict();
+
+const MAX_PASSAGE_LENGTH = 50_000;
+const MAX_WORD_LENGTH = 500;
+const MAX_WORDS = 20_000;
+
+export const validatePassage = (req) => {
+  const { title, language, content, difficulty } = req.body;
+
+  const errors = [];
+
+  if (typeof title !== "string" || title.trim().length > 200) {
+    errors.push("Title must be a string with maximum 200 characters.");
+  }
+
+  if (typeof language !== "string" || !language.trim()) {
+    errors.push("Language is required.");
+  }
+
+  if (typeof content !== "string" || !content.trim()) {
+    errors.push("Passage content is required.");
+    return errors;
+  }
+
+  const normalizedContent = content.normalize("NFC").trim();
+
+  if (normalizedContent.length > MAX_PASSAGE_LENGTH) {
+    errors.push("Passage exceeds the maximum character limit.");
+  }
+
+  const words = normalizedContent.split(/\s+/u);
+
+  if (words.length > MAX_WORDS) {
+    errors.push("Passage exceeds the maximum word count.");
+  }
+
+  const invalidWords = words
+    .map((word, index) => ({
+      index,
+      length: Array.from(word).length,
+    }))
+    .filter((word) => word.length > MAX_WORD_LENGTH);
+
+  if (invalidWords.length > 0) {
+    errors.push(
+      `Passage contains ${invalidWords.length} word(s) exceeding ${MAX_WORD_LENGTH} characters.`,
+    );
+  }
+
+  if (
+    difficulty !== undefined &&
+    !["easy", "medium", "hard"].includes(difficulty)
+  ) {
+    errors.push("Invalid passage difficulty.");
+  }
+
+  return errors.length ? errors : true;
+};

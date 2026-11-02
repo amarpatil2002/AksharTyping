@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 import TypingExam from "../../../models/typing/TypingExam.js";
 import TypingPassage from "../../../models/typing/TypingPassage.js";
-import TypingAttempt from "../../../models/typing/TypingAttempt.js";
+import TypingAttempt from "../../../models/typing/Typing.js";
 
 import asyncHandler from "../../../utils/asyncHandler.js";
 import { sendSuccess } from "../../../utils/sendSuccess.js";

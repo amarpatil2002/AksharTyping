@@ -4,10 +4,10 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
-import adminTypingExamRoutes from "./modules/exams/typing-exam/admin/adminTypingExam.routes.js";
+import adminTypingRoutes from "./modules/admin/typing-exam/index.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
-import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";
+// import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";
 
 import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
@@ -42,7 +42,18 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: "20kb" }));
+app.use(
+  express.json({
+    limit: "5mb",
+  }),
+);
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "5mb",
+  }),
+);
 app.use(cookieParser());
 
 app.get("/api/v1/health", (_req, res) => {
@@ -54,11 +65,11 @@ app.use("/api/v1/admin", sessionMiddleware);
 
 //admin routes
 app.use("/api/v1/admin/auth", adminAuthRoutes);
-app.use("/api/v1/admin/typing-exam", adminTypingExamRoutes);
+app.use("/api/v1/admin/typing", adminTypingRoutes);
 
 //user routes
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/typing-exam", typingExamRoutes);
+// app.use("/api/v1/typing-exam", typingExamRoutes);
 
 app.use((err, req, res, next) => {
   console.error("API Error:", err);

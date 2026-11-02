@@ -1,254 +1,693 @@
 import mongoose from "mongoose";
 
 const { Schema, model, models } = mongoose;
+const ObjectId = Schema.Types.ObjectId;
 
-/* =========================================================
-   LIMITS
-========================================================= */
+const EXAM_TYPES = ["WORD", "CHARACTER", "HYBRID"];
+
+const LANGUAGES = [
+  "english",
+  "hindi",
+  "assamese",
+  "bengali",
+  "bodo",
+  "dogri",
+  "gujarati",
+  "kannada",
+  "kashmiri",
+  "konkani",
+  "maithili",
+  "malayalam",
+  "manipuri",
+  "marathi",
+  "nepali",
+  "odia",
+  "punjabi",
+  "sanskrit",
+  "santali",
+  "sindhi",
+  "tamil",
+  "telugu",
+  "urdu",
+];
+
+const MEASUREMENT_UNITS = [
+  "WPM",
+  "CPM",
+  "KDPH",
+  "WORDS",
+  "CHARACTERS",
+  "KEY_DEPRESSIONS",
+];
 
 const MAX_PASSAGE_LENGTH = 100_000;
-const MAX_WORDS_PER_ATTEMPT = 20_000;
-const MAX_TIMELINE_POINTS = 5_000;
-const MAX_WORD_ANALYSIS = 20_000;
-const MAX_ERROR_CATEGORIES = 50;
-const MAX_RECOMMENDATIONS = 30;
+const MAX_TYPED_TEXT_LENGTH = 200_000;
+const MAX_ANALYSIS_ITEMS_PER_CHUNK = 1_000;
+const MAX_TIMELINE_ITEMS_PER_CHUNK = 500;
+const MAX_INPUT_EVENTS_PER_BATCH = 2_000;
 
-/* =========================================================
-   SHARED FIELD DEFINITIONS
-========================================================= */
+const createModel = (name, schema) => models[name] || model(name, schema);
 
-const countField = {
+const nonNegativeNumber = {
   type: Number,
-  required: true,
   min: 0,
   default: 0,
 };
 
-const wpmField = {
+const percentNumber = {
   type: Number,
-  required: true,
-  min: 0,
-  max: 1000,
-  default: 0,
-};
-
-const percentageField = {
-  type: Number,
-  required: true,
   min: 0,
   max: 100,
   default: 0,
 };
 
-const optionalString = {
-  type: String,
-  default: "",
-  trim: false,
-};
-
 /* =========================================================
-   EXAM CONFIGURATION SNAPSHOT
-
-   Keeps the exam configuration unchanged even if an admin
-   edits the original exam after an attempt has started.
+   REUSABLE SNAPSHOT SCHEMAS
 ========================================================= */
 
-const configSnapshotSchema = new Schema(
+const measurementSnapshotSchema = new Schema(
   {
-    title: {
+    value: { type: Number, required: true, min: 0 },
+    unit: { type: String, required: true, enum: MEASUREMENT_UNITS },
+    comparison: {
       type: String,
-      required: true,
-      trim: true,
-      maxlength: 200,
-    },
-
-    language: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    durationSeconds: {
-      type: Number,
-      required: true,
-      min: 1,
-      max: 7200,
-    },
-
-    targetWpm: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 500,
-      default: 40,
-    },
-
-    maximumMarks: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    passingPercentage: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 100,
-      default: 40,
-    },
-
-    passingMarks: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    scoring: {
-      type: Schema.Types.Mixed,
-      default: () => ({}),
+      enum: ["MINIMUM", "MAXIMUM", "EXACT"],
+      default: "MINIMUM",
     },
   },
-  {
-    _id: false,
-    id: false,
-    strict: true,
-  },
+  { _id: false, strict: "throw" },
 );
 
-const scoringBreakdownSchema = new mongoose.Schema(
+const examSnapshotSchema = new Schema(
   {
-    method: {
+    examType: { type: String, required: true, enum: EXAM_TYPES },
+    examTitle: { type: String, required: true, trim: true, maxlength: 200 },
+    examCode: { type: String, trim: true, maxlength: 100, default: null },
+    authority: { type: String, trim: true, maxlength: 150, default: null },
+    recruitmentCycle: {
       type: String,
-      enum: [
-        "standard",
-        "net_wpm",
-        "accuracy",
-        "weighted",
-        "custom",
-        "fixed_error_penalty",
-        "grouped_error_penalty",
-        "correct_words_ratio",
-        "qualifying_only",
-        "speed_based",
-      ],
+      trim: true,
+      maxlength: 50,
+      default: null,
+    },
+    language: { type: String, required: true, enum: LANGUAGES },
+    durationSeconds: { type: Number, required: true, min: 1, max: 86400 },
+    target: { type: measurementSnapshotSchema, required: true },
+
+    wordConfig: { type: Schema.Types.Mixed, default: undefined },
+    characterConfig: { type: Schema.Types.Mixed, default: undefined },
+    hybridConfig: { type: Schema.Types.Mixed, default: undefined },
+    policySnapshot: { type: Schema.Types.Mixed, required: true },
+
+    examVersion: { type: Number, min: 1, required: true },
+    configVersion: { type: Number, min: 1, required: true },
+    policyVersion: { type: Number, min: 1, required: true },
+    evaluatorVersion: {
+      type: String,
+      trim: true,
       required: true,
-    },
-    policyVersion: {
-      type: Number,
-      default: 1,
-    },
-    speedMarks: {
-      type: Number,
-      default: 0,
-    },
-    deductions: {
-      type: Number,
-      default: 0,
-    },
-    rawMarks: {
-      type: Number,
-      default: 0,
-    },
-    details: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {},
+      maxlength: 100,
     },
   },
-  { _id: false, strict: true },
+  { _id: false, strict: "throw" },
 );
-
-/* =========================================================
-   PASSAGE SNAPSHOT
-
-   The original passage must never change after the attempt
-   starts. This is essential for historical result accuracy.
-========================================================= */
 
 const passageSnapshotSchema = new Schema(
   {
-    title: {
+    passageId: { type: ObjectId, ref: "TypingPassage", required: true },
+    passageVersion: { type: Number, min: 1, required: true },
+    title: { type: String, required: true, trim: true, maxlength: 200 },
+    content: { type: String, required: true, maxlength: MAX_PASSAGE_LENGTH },
+    language: { type: String, required: true, enum: LANGUAGES },
+    normalization: {
       type: String,
-      required: true,
+      enum: ["NFC", "NFD", "NONE"],
+      default: "NFC",
+    },
+    wordCount: { type: Number, min: 0, required: true },
+    characterCount: { type: Number, min: 0, required: true },
+    graphemeCount: { type: Number, min: 0, required: true },
+    contentHash: { type: String, required: true, trim: true, maxlength: 128 },
+  },
+  { _id: false, strict: "throw" },
+);
+
+/* =========================================================
+   SUMMARY METRICS
+========================================================= */
+
+const wordMetricsSchema = new Schema(
+  {
+    totalWords: nonNegativeNumber,
+    wordsTyped: nonNegativeNumber,
+    correctWords: nonNegativeNumber,
+    incorrectWords: nonNegativeNumber,
+    misspellings: nonNegativeNumber,
+    wrongWords: nonNegativeNumber,
+    omissions: nonNegativeNumber,
+    notReachedWords: nonNegativeNumber,
+    extraWords: nonNegativeNumber,
+    totalErrors: nonNegativeNumber,
+    grossWpm: nonNegativeNumber,
+    netWpm: nonNegativeNumber,
+    accuracy: percentNumber,
+    elapsedSeconds: nonNegativeNumber,
+  },
+  { _id: false, strict: "throw" },
+);
+
+const characterMetricsSchema = new Schema(
+  {
+    totalCharacters: nonNegativeNumber,
+    charactersTyped: nonNegativeNumber,
+    correctCharacters: nonNegativeNumber,
+    incorrectCharacters: nonNegativeNumber,
+    substitutions: nonNegativeNumber,
+    insertions: nonNegativeNumber,
+    deletions: nonNegativeNumber,
+    notReachedCharacters: nonNegativeNumber,
+    totalErrors: nonNegativeNumber,
+    grossCpm: nonNegativeNumber,
+    netCpm: nonNegativeNumber,
+    accuracy: percentNumber,
+    elapsedSeconds: nonNegativeNumber,
+  },
+  { _id: false, strict: "throw" },
+);
+
+const inputMetricsSchema = new Schema(
+  {
+    totalKeyEvents: nonNegativeNumber,
+    characterKeyEvents: nonNegativeNumber,
+    backspaceEvents: nonNegativeNumber,
+    deleteEvents: nonNegativeNumber,
+    modifierKeyEvents: nonNegativeNumber,
+    navigationKeyEvents: nonNegativeNumber,
+    pasteEvents: nonNegativeNumber,
+    kdph: nonNegativeNumber,
+
+    eventCaptureEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    acceptedEventCount: nonNegativeNumber,
+    rejectedEventCount: nonNegativeNumber,
+
+    firstEventAt: { type: Date, default: null },
+    lastEventAt: { type: Date, default: null },
+
+    eventChainDigest: {
+      type: String,
+      default: null,
+      maxlength: 128,
+    },
+
+    validationStatus: {
+      type: String,
+      enum: ["NOT_REQUIRED", "PENDING", "VALID", "INVALID"],
+      default: "NOT_REQUIRED",
+    },
+  },
+  { _id: false, strict: "throw" },
+);
+
+const resultSchema = new Schema(
+  {
+    wordMetrics: {
+      type: wordMetricsSchema,
+      default: undefined,
+    },
+
+    characterMetrics: {
+      type: characterMetricsSchema,
+      default: undefined,
+    },
+
+    inputMetrics: {
+      type: inputMetricsSchema,
+      default: undefined,
+    },
+
+    grossSpeed: nonNegativeNumber,
+    netSpeed: nonNegativeNumber,
+
+    speedUnit: {
+      type: String,
+      enum: MEASUREMENT_UNITS,
+      default: "WPM",
+    },
+
+    accuracy: percentNumber,
+    totalErrors: nonNegativeNumber,
+
+    totalMarks: {
+      type: Number,
+      default: null,
+    },
+
+    marksObtained: {
+      type: Number,
+      default: null,
+    },
+
+    marksLost: nonNegativeNumber,
+
+    isQualified: {
+      type: Boolean,
+      default: null,
+    },
+
+    qualificationStatus: {
+      type: String,
+      enum: ["QUALIFIED", "NOT_QUALIFIED", "PENDING", "DISQUALIFIED"],
+      default: "PENDING",
+    },
+
+    qualificationReasons: {
+      type: [{ type: String, trim: true, maxlength: 500 }],
+      default: [],
+    },
+
+    evaluatedAt: {
+      type: Date,
+      default: null,
+    },
+
+    evaluatorVersion: {
+      type: String,
       trim: true,
-      maxlength: 200,
+      maxlength: 100,
+      default: null,
     },
 
-    language: {
+    resultHash: {
       type: String,
-      required: true,
       trim: true,
+      maxlength: 128,
+      default: null,
     },
+  },
+  { _id: false, strict: "throw" },
+);
 
-    content: {
-      type: String,
-      required: true,
-      maxlength: MAX_PASSAGE_LENGTH,
-    },
+/* =========================================================
+   MAIN TYPING ATTEMPT MODEL
+========================================================= */
 
-    wordCount: {
+const typingAttemptSchema = new Schema(
+  {
+    attemptNumber: {
       type: Number,
       required: true,
-      min: 0,
-      max: MAX_WORDS_PER_ATTEMPT,
+      min: 1,
     },
 
-    difficulty: {
+    submissionId: {
       type: String,
-      enum: ["easy", "medium", "hard"],
-      default: "medium",
+      trim: true,
+      maxlength: 150,
+      default: null,
+      set: (value) =>
+        typeof value === "string" && value.trim() ? value.trim() : null,
+    },
+
+    userId: {
+      type: ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    examId: {
+      type: ObjectId,
+      ref: "TypingExam",
+      required: true,
+    },
+
+    passageId: {
+      type: ObjectId,
+      ref: "TypingPassage",
+      required: true,
+    },
+
+    // Frozen by the start-exam service.
+    configSnapshot: {
+      type: examSnapshotSchema,
+      required: true,
+      immutable: true,
+    },
+
+    passageSnapshot: {
+      type: passageSnapshotSchema,
+      required: true,
+      immutable: true,
+    },
+
+    typedText: {
+      type: String,
+      default: "",
+      maxlength: MAX_TYPED_TEXT_LENGTH,
+    },
+
+    typedCharacterCount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    typedWordCount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    status: {
+      type: String,
+      enum: [
+        "CREATED",
+        "IN_PROGRESS",
+        "PAUSED",
+        "SUBMITTED",
+        "EVALUATING",
+        "COMPLETED",
+        "EXPIRED",
+        "CANCELLED",
+        "DISQUALIFIED",
+        "EVALUATION_FAILED",
+      ],
+      default: "CREATED",
+      index: true,
+    },
+
+    startedAt: { type: Date, default: null },
+    deadlineAt: { type: Date, default: null },
+    submittedAt: { type: Date, default: null },
+    evaluatedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    pausedAt: { type: Date, default: null },
+    resumedAt: { type: Date, default: null },
+
+    elapsedSeconds: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    remainingSeconds: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    // Increment for every accepted progress write.
+    progressVersion: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    evaluationAttempts: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    lastSavedAt: {
+      type: Date,
+      default: null,
+    },
+
+    inputMetrics: {
+      type: inputMetricsSchema,
+      default: () => ({}),
+    },
+
+    analysisSummary: {
+      wordAnalysisCount: { type: Number, min: 0, default: 0 },
+      characterAnalysisCount: { type: Number, min: 0, default: 0 },
+      timelinePointCount: { type: Number, min: 0, default: 0 },
+      inputEventBatchCount: { type: Number, min: 0, default: 0 },
+    },
+
+    result: {
+      type: resultSchema,
+      default: undefined,
+    },
+
+    evaluationError: {
+      code: {
+        type: String,
+        trim: true,
+        maxlength: 100,
+        default: null,
+      },
+
+      message: {
+        type: String,
+        trim: true,
+        maxlength: 2000,
+        default: null,
+      },
+
+      occurredAt: {
+        type: Date,
+        default: null,
+      },
+    },
+
+    clientInfo: {
+      browser: {
+        type: String,
+        trim: true,
+        maxlength: 150,
+        default: null,
+      },
+
+      operatingSystem: {
+        type: String,
+        trim: true,
+        maxlength: 150,
+        default: null,
+      },
+
+      deviceType: {
+        type: String,
+        enum: ["DESKTOP", "LAPTOP", "TABLET", "MOBILE", "OTHER"],
+        default: "OTHER",
+      },
+
+      screenWidth: {
+        type: Number,
+        min: 0,
+        default: null,
+      },
+
+      screenHeight: {
+        type: Number,
+        min: 0,
+        default: null,
+      },
+    },
+
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
+
+    cancellationReason: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: null,
     },
   },
   {
-    _id: false,
-    id: false,
-    strict: true,
+    timestamps: true,
+    versionKey: false,
+    strict: "throw",
+    minimize: false,
   },
 );
 
 /* =========================================================
-   WORD COMPARISON
-
-   Every aligned word is saved individually.
-
-   correct       = exact word match
-   misspelling   = similar word with spelling differences
-   wrong         = a different substituted word
-   omitted       = expected word was skipped
-   not_reached   = candidate did not reach this passage word
-   extra         = candidate typed an additional word
+   ATTEMPT VALIDATION
 ========================================================= */
 
-const wordAnalysisSchema = new Schema(
+typingAttemptSchema.pre("validate", function () {
+  const type = this.configSnapshot?.examType;
+
+  const word = this.configSnapshot?.wordConfig;
+  const character = this.configSnapshot?.characterConfig;
+  const hybrid = this.configSnapshot?.hybridConfig;
+
+  if (type === "WORD" && (!word || character || hybrid)) {
+    this.invalidate("configSnapshot", "WORD attempts require only wordConfig.");
+  }
+
+  if (type === "CHARACTER" && (!character || word || hybrid)) {
+    this.invalidate(
+      "configSnapshot",
+      "CHARACTER attempts require only characterConfig.",
+    );
+  }
+
+  if (type === "HYBRID" && (!hybrid || word || character)) {
+    this.invalidate(
+      "configSnapshot",
+      "HYBRID attempts require only hybridConfig.",
+    );
+  }
+
+  if (
+    this.passageSnapshot?.language &&
+    this.configSnapshot?.language &&
+    this.passageSnapshot.language !== this.configSnapshot.language
+  ) {
+    this.invalidate(
+      "passageSnapshot.language",
+      "Passage and exam languages must match.",
+    );
+  }
+
+  if (
+    this.status === "COMPLETED" &&
+    (!this.result?.evaluatedAt || !this.result?.evaluatorVersion)
+  ) {
+    this.invalidate(
+      "result",
+      "A completed attempt requires a finalized evaluation.",
+    );
+  }
+
+  if (
+    this.result?.qualificationStatus === "QUALIFIED" &&
+    this.result?.isQualified !== true
+  ) {
+    this.invalidate(
+      "result.isQualified",
+      "QUALIFIED status requires isQualified=true.",
+    );
+  }
+
+  if (
+    this.result?.qualificationStatus === "NOT_QUALIFIED" &&
+    this.result?.isQualified !== false
+  ) {
+    this.invalidate(
+      "result.isQualified",
+      "NOT_QUALIFIED status requires isQualified=false.",
+    );
+  }
+
+  if (
+    this.inputMetrics?.validationStatus === "VALID" &&
+    !this.inputMetrics?.eventCaptureEnabled
+  ) {
+    this.invalidate(
+      "inputMetrics.validationStatus",
+      "Validated input metrics require event capture.",
+    );
+  }
+});
+
+/* =========================================================
+   INDEXES
+========================================================= */
+
+typingAttemptSchema.index(
+  { userId: 1, examId: 1, attemptNumber: 1 },
   {
-    position: {
+    unique: true,
+    name: "uniq_user_exam_attempt_number",
+  },
+);
+
+typingAttemptSchema.index(
+  { submissionId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      submissionId: { $type: "string" },
+    },
+    name: "uniq_submission_id",
+  },
+);
+
+typingAttemptSchema.index(
+  { userId: 1, createdAt: -1 },
+  { name: "user_attempt_history" },
+);
+
+typingAttemptSchema.index(
+  { examId: 1, status: 1, createdAt: -1 },
+  { name: "exam_attempt_status" },
+);
+
+typingAttemptSchema.index(
+  { status: 1, submittedAt: 1 },
+  { name: "attempt_evaluation_queue" },
+);
+
+/* =========================================================
+   LIFECYCLE TRANSITIONS
+========================================================= */
+
+typingAttemptSchema.statics.canTransition = function (from, to) {
+  const transitions = {
+    CREATED: ["IN_PROGRESS", "CANCELLED"],
+
+    IN_PROGRESS: [
+      "PAUSED",
+      "SUBMITTED",
+      "EXPIRED",
+      "CANCELLED",
+      "DISQUALIFIED",
+    ],
+
+    PAUSED: ["IN_PROGRESS", "CANCELLED", "EXPIRED"],
+
+    SUBMITTED: ["EVALUATING", "EVALUATION_FAILED"],
+
+    EVALUATING: ["COMPLETED", "EVALUATION_FAILED"],
+
+    EVALUATION_FAILED: ["EVALUATING"],
+
+    COMPLETED: [],
+    EXPIRED: [],
+    CANCELLED: [],
+    DISQUALIFIED: [],
+  };
+
+  return Boolean(transitions[from]?.includes(to));
+};
+
+const TypingAttempt = createModel("TypingAttempt", typingAttemptSchema);
+
+/* =========================================================
+   WORD ANALYSIS COLLECTION
+========================================================= */
+
+const wordAnalysisItemSchema = new Schema(
+  {
+    index: {
       type: Number,
       required: true,
-      min: 0,
-    },
-
-    referenceIndex: {
-      type: Number,
-      default: null,
-      min: 0,
-    },
-
-    typedIndex: {
-      type: Number,
-      default: null,
       min: 0,
     },
 
     expectedWord: {
-      ...optionalString,
+      type: String,
+      default: "",
       maxlength: 500,
     },
 
     typedWord: {
-      ...optionalString,
+      type: String,
+      default: "",
       maxlength: 500,
     },
 
-    type: {
+    status: {
       type: String,
       required: true,
       enum: [
@@ -270,14 +709,20 @@ const wordAnalysisSchema = new Schema(
     errorCategory: {
       type: String,
       enum: [
-        "none",
-        "spelling",
-        "wrong_word",
-        "omission",
-        "not_reached",
-        "extra_word",
+        "NONE",
+        "SPELLING",
+        "SUBSTITUTION",
+        "INSERTION",
+        "DELETION",
+        "OMISSION",
+        "EXTRA_WORD",
+        "NOT_REACHED",
+        "PUNCTUATION",
+        "WHITESPACE",
+        "CASE",
+        "OTHER",
       ],
-      default: "none",
+      default: "NONE",
     },
 
     marksLost: {
@@ -285,49 +730,18 @@ const wordAnalysisSchema = new Schema(
       min: 0,
       default: 0,
     },
-  },
-  {
-    _id: false,
-    id: false,
-    strict: "throw",
-  },
-);
 
-/* =========================================================
-   WORD METRICS
+    isHalfMistake: {
+      type: Boolean,
+      default: false,
+    },
 
-   These metrics are calculated from the saved word alignment.
-========================================================= */
+    isFullMistake: {
+      type: Boolean,
+      default: false,
+    },
 
-const wordMetricsSchema = new Schema(
-  {
-    totalWords: countField,
-
-    wordsTyped: countField,
-
-    correctWords: countField,
-
-    incorrectWords: countField,
-
-    misspellings: countField,
-
-    wrongWords: countField,
-
-    omissions: countField,
-
-    notReachedWords: countField,
-
-    extraWords: countField,
-
-    totalErrors: countField,
-
-    grossWpm: wpmField,
-
-    netWpm: wpmField,
-
-    accuracy: percentageField,
-
-    elapsedSeconds: {
+    timeTakenMs: {
       type: Number,
       min: 0,
       default: 0,
@@ -335,886 +749,393 @@ const wordMetricsSchema = new Schema(
   },
   {
     _id: false,
-    id: false,
-    strict: true,
+    strict: "throw",
   },
 );
 
-/* =========================================================
-   TIMELINE
-
-   Stores word-level progress snapshots during the exam.
-   These are used for speed and accuracy charts.
-========================================================= */
-
-const timelineSchema = new Schema(
+const typingWordAnalysisSchema = new Schema(
   {
-    elapsedSeconds: {
+    attemptId: {
+      type: ObjectId,
+      ref: "TypingAttempt",
+      required: true,
+    },
+
+    chunkIndex: {
       type: Number,
       required: true,
       min: 0,
-      max: 7200,
     },
 
-    totalWords: countField,
+    items: {
+      type: [wordAnalysisItemSchema],
+      required: true,
+      validate: {
+        validator: (value) =>
+          value.length > 0 && value.length <= MAX_ANALYSIS_ITEMS_PER_CHUNK,
+        message: "Word analysis chunk must contain 1 to 1000 items.",
+      },
+    },
 
-    wordsTyped: countField,
-
-    correctWords: countField,
-
-    incorrectWords: countField,
-
-    misspellings: countField,
-
-    wrongWords: countField,
-
-    omissions: countField,
-
-    notReachedWords: countField,
-
-    extraWords: countField,
-
-    totalErrors: countField,
-
-    errorsInInterval: countField,
-
-    grossWpm: wpmField,
-
-    netWpm: wpmField,
-
-    accuracy: percentageField,
-
-    savedAt: {
+    createdAt: {
       type: Date,
       default: Date.now,
+      immutable: true,
     },
   },
   {
-    _id: false,
-    id: false,
+    versionKey: false,
     strict: "throw",
   },
 );
 
-/* =========================================================
-   ERROR DISTRIBUTION
-
-   Used by the result page's error analysis charts.
-========================================================= */
-
-const errorCategorySchema = new Schema(
+typingWordAnalysisSchema.index(
+  { attemptId: 1, chunkIndex: 1 },
   {
-    category: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 100,
-    },
-
-    count: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    percentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-
-    marksLost: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-  },
-  {
-    _id: false,
-    id: false,
-    strict: "throw",
+    unique: true,
+    name: "uniq_attempt_word_analysis_chunk",
   },
 );
 
-/* =========================================================
-   MINUTE-WISE PERFORMANCE
-========================================================= */
-
-const minutePerformanceSchema = new Schema(
-  {
-    minute: {
-      type: Number,
-      required: true,
-      min: 1,
-    },
-
-    startElapsedSeconds: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    endElapsedSeconds: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    wordsTyped: countField,
-
-    correctWords: countField,
-
-    incorrectWords: countField,
-
-    totalErrors: countField,
-
-    grossWpm: wpmField,
-
-    netWpm: wpmField,
-
-    accuracy: percentageField,
-  },
-  {
-    _id: false,
-    id: false,
-    strict: "throw",
-  },
+const TypingWordAnalysis = createModel(
+  "TypingWordAnalysis",
+  typingWordAnalysisSchema,
 );
 
 /* =========================================================
-   PERFORMANCE SEGMENTS
+   CHARACTER ANALYSIS COLLECTION
 ========================================================= */
 
-const performanceSegmentSchema = new Schema(
+const characterAnalysisItemSchema = new Schema(
   {
-    segmentIndex: {
+    index: {
       type: Number,
       required: true,
       min: 0,
     },
 
-    label: {
-      type: String,
-      trim: true,
-      maxlength: 100,
-    },
-
-    startElapsedSeconds: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    endElapsedSeconds: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    wordsTyped: countField,
-
-    correctWords: countField,
-
-    totalErrors: countField,
-
-    grossWpm: wpmField,
-
-    netWpm: wpmField,
-
-    accuracy: percentageField,
-  },
-  {
-    _id: false,
-    id: false,
-    strict: "throw",
-  },
-);
-
-/* =========================================================
-   QUALIFICATION REQUIREMENTS
-========================================================= */
-
-const qualificationSchema = new Schema(
-  {
-    minimumWpm: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    minimumAccuracy: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-
-    maximumErrors: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-
-    minimumMarks: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    achievedWpm: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    achievedAccuracy: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-
-    achievedMarks: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    wpmRequirementMet: {
-      type: Boolean,
-      default: false,
-    },
-
-    accuracyRequirementMet: {
-      type: Boolean,
-      default: false,
-    },
-
-    errorsRequirementMet: {
-      type: Boolean,
-      default: true,
-    },
-
-    marksRequirementMet: {
-      type: Boolean,
-      default: false,
-    },
-
-    passed: {
-      type: Boolean,
-      default: false,
-    },
-    maximumErrorPercentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-
-    requireAll: {
-      type: Boolean,
-      default: true,
-    },
-
-    achievedErrors: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    achievedErrorPercentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-  },
-  {
-    _id: false,
-    id: false,
-    strict: true,
-  },
-);
-
-/* =========================================================
-   RESULT SCHEMA
-
-   The final report contains:
-   - word-level metrics
-   - exact word comparison
-   - marks and qualification
-   - error distribution
-   - chart data
-========================================================= */
-
-const resultSchema = new Schema(
-  {
-    status: {
-      type: String,
-      enum: ["evaluated", "passed", "failed"],
-      default: "evaluated",
-    },
-
-    wordMetrics: {
-      type: wordMetricsSchema,
-      required: true,
-    },
-
-    wordAnalysis: {
-      type: [wordAnalysisSchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_WORD_ANALYSIS,
-        message: "Word analysis exceeds the allowed limit.",
-      },
-    },
-
-    marks: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    maximumMarks: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    passingPercentage: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 100,
-    },
-
-    passingMarks: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    percentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-
-    meetsMinimumWpm: {
-      type: Boolean,
-      default: false,
-    },
-
-    meetsMinimumAccuracy: {
-      type: Boolean,
-      default: false,
-    },
-
-    meetsMaximumErrors: {
-      type: Boolean,
-      default: true,
-    },
-
-    meetsPassingMarks: {
-      type: Boolean,
-      default: false,
-    },
-
-    passed: {
-      type: Boolean,
-      required: true,
-      default: false,
-    },
-
-    qualification: {
-      type: qualificationSchema,
-      default: () => ({}),
-    },
-
-    errorDistribution: {
-      type: [errorCategorySchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_ERROR_CATEGORIES,
-        message: "Too many error categories.",
-      },
-    },
-
-    minutePerformance: {
-      type: [minutePerformanceSchema],
-      default: [],
-    },
-
-    performanceSegments: {
-      type: [performanceSegmentSchema],
-      default: [],
-    },
-
-    timeline: {
-      type: [timelineSchema],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_TIMELINE_POINTS,
-        message: "Too many result timeline points.",
-      },
-    },
-
-    summary: {
-      type: Schema.Types.Mixed,
-      default: () => ({}),
-    },
-
-    analytics: {
-      type: Schema.Types.Mixed,
-      default: () => ({}),
-    },
-
-    insights: {
-      type: [String],
-      default: [],
-      validate: {
-        validator: (items) => items.length <= MAX_RECOMMENDATIONS,
-        message: "Too many performance insights.",
-      },
-    },
-
-    scoringBreakdown: {
-      type: scoringBreakdownSchema,
-      default: undefined,
-    },
-
-    reportVersion: {
-      type: Number,
-      default: 1,
-      min: 1,
-    },
-
-    evaluatedAt: {
-      type: Date,
-      required: true,
-    },
-  },
-  {
-    _id: false,
-    id: false,
-    strict: "throw",
-    minimize: false,
-  },
-);
-
-/* =========================================================
-   MAIN TYPING ATTEMPT MODEL
-========================================================= */
-
-const typingAttemptSchema = new Schema(
-  {
-    /* Candidate who started the examination */
-
-    userId: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      immutable: true,
-      index: true,
-    },
-
-    /* Original exam reference */
-
-    examId: {
-      type: Schema.Types.ObjectId,
-      ref: "TypingExam",
-      required: true,
-      immutable: true,
-      index: true,
-    },
-
-    /* Original passage reference */
-
-    passageId: {
-      type: Schema.Types.ObjectId,
-      ref: "TypingPassage",
-      required: true,
-      immutable: true,
-      index: true,
-    },
-
-    /* Frozen exam configuration */
-
-    configSnapshot: {
-      type: configSnapshotSchema,
-      required: true,
-      immutable: true,
-    },
-
-    /* Frozen passage information */
-
-    passageSnapshot: {
-      type: passageSnapshotSchema,
-      required: true,
-      immutable: true,
-    },
-
-    /* Exact text entered by the candidate */
-
-    typedText: {
+    expectedCharacter: {
       type: String,
       default: "",
-      maxlength: MAX_PASSAGE_LENGTH,
+      maxlength: 32,
     },
 
-    /* Attempt lifecycle */
+    typedCharacter: {
+      type: String,
+      default: "",
+      maxlength: 32,
+    },
 
     status: {
       type: String,
-      enum: ["in_progress", "evaluated", "expired", "abandoned"],
-      default: "in_progress",
       required: true,
-      index: true,
+      enum: ["correct", "substitution", "insertion", "deletion", "not_reached"],
     },
 
-    /* Exam timing */
-
-    startedAt: {
-      type: Date,
-      required: true,
-      default: Date.now,
-      immutable: true,
+    errorCategory: {
+      type: String,
+      enum: [
+        "NONE",
+        "SUBSTITUTION",
+        "INSERTION",
+        "DELETION",
+        "NOT_REACHED",
+        "WHITESPACE",
+        "PUNCTUATION",
+        "CASE",
+        "OTHER",
+      ],
+      default: "NONE",
     },
 
-    deadlineAt: {
-      type: Date,
-      required: true,
-      immutable: true,
-    },
-
-    submittedAt: {
-      type: Date,
-      default: null,
-    },
-
-    lastActivityAt: {
-      type: Date,
-      default: Date.now,
-    },
-
-    elapsedSeconds: {
+    marksLost: {
       type: Number,
       min: 0,
       default: 0,
     },
 
-    remainingSeconds: {
+    timeTakenMs: {
       type: Number,
       min: 0,
       default: 0,
     },
+  },
+  {
+    _id: false,
+    strict: "throw",
+  },
+);
 
-    /* Optimistic concurrency for autosave */
-
-    progressVersion: {
-      type: Number,
-      min: 0,
-      default: 0,
+const typingCharacterAnalysisSchema = new Schema(
+  {
+    attemptId: {
+      type: ObjectId,
+      ref: "TypingAttempt",
+      required: true,
     },
 
-    /* Word-based progress history */
+    chunkIndex: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
 
-    timeline: {
-      type: [timelineSchema],
-      default: [],
+    items: {
+      type: [characterAnalysisItemSchema],
+      required: true,
       validate: {
-        validator: (items) => items.length <= MAX_TIMELINE_POINTS,
-        message: "Attempt timeline exceeds the allowed limit.",
+        validator: (value) =>
+          value.length > 0 && value.length <= MAX_ANALYSIS_ITEMS_PER_CHUNK,
+        message: "Character analysis chunk must contain 1 to 1000 items.",
       },
     },
 
-    /* Final evaluated report */
+    createdAt: {
+      type: Date,
+      default: Date.now,
+      immutable: true,
+    },
+  },
+  {
+    versionKey: false,
+    strict: "throw",
+  },
+);
 
-    result: {
-      type: resultSchema,
-      default: undefined,
+typingCharacterAnalysisSchema.index(
+  { attemptId: 1, chunkIndex: 1 },
+  {
+    unique: true,
+    name: "uniq_attempt_character_analysis_chunk",
+  },
+);
+
+const TypingCharacterAnalysis = createModel(
+  "TypingCharacterAnalysis",
+  typingCharacterAnalysisSchema,
+);
+
+/* =========================================================
+   INPUT EVENT BATCH COLLECTION
+========================================================= */
+
+const typingInputEventBatchSchema = new Schema(
+  {
+    attemptId: {
+      type: ObjectId,
+      ref: "TypingAttempt",
+      required: true,
     },
 
-    /* Prevent duplicate submissions */
-
-    submissionId: {
-      type: String,
-      trim: true,
-      maxlength: 128,
-      default: null,
+    batchNumber: {
+      type: Number,
+      required: true,
+      min: 0,
     },
 
-    evaluatedAt: {
+    firstSequence: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    lastSequence: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    eventCount: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: MAX_INPUT_EVENTS_PER_BATCH,
+    },
+
+    characterKeyEvents: nonNegativeNumber,
+    backspaceEvents: nonNegativeNumber,
+    deleteEvents: nonNegativeNumber,
+    modifierKeyEvents: nonNegativeNumber,
+    navigationKeyEvents: nonNegativeNumber,
+
+    clientStartedAt: {
       type: Date,
       default: null,
     },
+
+    clientEndedAt: {
+      type: Date,
+      default: null,
+    },
+
+    serverReceivedAt: {
+      type: Date,
+      required: true,
+      default: Date.now,
+    },
+
+    previousBatchDigest: {
+      type: String,
+      default: null,
+      maxlength: 128,
+    },
+
+    batchDigest: {
+      type: String,
+      required: true,
+      maxlength: 128,
+    },
+
+    validationStatus: {
+      type: String,
+      enum: ["PENDING", "ACCEPTED", "REJECTED"],
+      default: "PENDING",
+    },
+
+    validationReason: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: null,
+    },
   },
   {
-    timestamps: true,
-    versionKey: "__v",
+    versionKey: false,
     strict: "throw",
-    minimize: false,
   },
 );
 
-/* =========================================================
-   DOCUMENT VALIDATION
-========================================================= */
-
-typingAttemptSchema.pre("validate", function () {
-  /* Deadline must be after start time */
-
-  if (this.startedAt && this.deadlineAt && this.deadlineAt <= this.startedAt) {
+typingInputEventBatchSchema.pre("validate", function () {
+  if (this.lastSequence < this.firstSequence) {
     this.invalidate(
-      "deadlineAt",
-      "Deadline must be later than the start time.",
+      "lastSequence",
+      "lastSequence cannot be less than firstSequence.",
     );
   }
 
-  /* Elapsed time cannot exceed configured duration */
+  const sequenceCount = this.lastSequence - this.firstSequence + 1;
 
-  const duration = Number(this.configSnapshot?.durationSeconds ?? 0);
-
-  if (duration > 0 && this.elapsedSeconds > duration) {
-    this.invalidate(
-      "elapsedSeconds",
-      "Elapsed time cannot exceed the examination duration.",
-    );
-  }
-
-  /* Evaluated attempts must have a result */
-
-  if (this.status === "evaluated" && !this.result) {
-    this.invalidate("result", "An evaluated attempt must contain a result.");
-  }
-
-  /* Evaluated attempts must have timestamps */
-
-  if (this.status === "evaluated" && !this.evaluatedAt) {
-    this.invalidate(
-      "evaluatedAt",
-      "An evaluated attempt must have an evaluation timestamp.",
-    );
-  }
-
-  if (this.status === "evaluated" && !this.submittedAt) {
-    this.invalidate(
-      "submittedAt",
-      "An evaluated attempt must have a submission timestamp.",
-    );
-  }
-
-  /* Validate final marks */
-
-  if (this.result) {
-    const result = this.result;
-
-    if (
-      result.marks != null &&
-      result.maximumMarks != null &&
-      result.marks > result.maximumMarks
-    ) {
-      this.invalidate("result.marks", "Marks cannot exceed maximum marks.");
-    }
-
-    if (
-      result.passingMarks != null &&
-      result.maximumMarks != null &&
-      result.passingMarks > result.maximumMarks
-    ) {
-      this.invalidate(
-        "result.passingMarks",
-        "Passing marks cannot exceed maximum marks.",
-      );
-    }
-
-    if (
-      result.wordMetrics &&
-      result.wordMetrics.correctWords > result.wordMetrics.wordsTyped
-    ) {
-      this.invalidate(
-        "result.wordMetrics.correctWords",
-        "Correct words cannot exceed words typed.",
-      );
-    }
-
-    if (
-      result.wordMetrics &&
-      result.wordMetrics.totalErrors !==
-        result.wordMetrics.incorrectWords +
-          result.wordMetrics.omissions +
-          result.wordMetrics.notReachedWords +
-          result.wordMetrics.extraWords
-    ) {
-      this.invalidate(
-        "result.wordMetrics.totalErrors",
-        "Total errors must equal the sum of the word error categories.",
-      );
-    }
-
-    /* Every alignment entry needs a valid classification */
-
-    for (const [index, word] of (result.wordAnalysis || []).entries()) {
-      if (word.type === "correct" && word.expectedWord !== word.typedWord) {
-        this.invalidate(
-          `result.wordAnalysis.${index}`,
-          "A correct word must exactly match its expected word.",
-        );
-      }
-
-      if (word.type === "omitted" || word.type === "not_reached") {
-        if (word.typedWord) {
-          this.invalidate(
-            `result.wordAnalysis.${index}.typedWord`,
-            "An omitted or not-reached word cannot have a typed word.",
-          );
-        }
-      }
-
-      if (word.type === "extra" && word.expectedWord) {
-        this.invalidate(
-          `result.wordAnalysis.${index}.expectedWord`,
-          "An extra word cannot have an expected word.",
-        );
-      }
-    }
-
-    /* Validate result timeline duration */
-
-    for (const [index, point] of (result.timeline || []).entries()) {
-      if (duration > 0 && point.elapsedSeconds > duration) {
-        this.invalidate(
-          `result.timeline.${index}.elapsedSeconds`,
-          "Result timeline exceeds the exam duration.",
-        );
-      }
-    }
-  }
-
-  /* Validate autosave timeline */
-
-  for (const [index, point] of (this.timeline || []).entries()) {
-    if (duration > 0 && point.elapsedSeconds > duration) {
-      this.invalidate(
-        `timeline.${index}.elapsedSeconds`,
-        "Timeline elapsed time cannot exceed exam duration.",
-      );
-    }
-
-    if (point.correctWords > point.wordsTyped) {
-      this.invalidate(
-        `timeline.${index}.correctWords`,
-        "Correct words cannot exceed words typed.",
-      );
-    }
+  if (sequenceCount !== this.eventCount) {
+    this.invalidate("eventCount", "eventCount must match the sequence range.");
   }
 });
 
-/* =========================================================
-   INDEXES
-========================================================= */
-
-/* Candidate attempt history */
-
-typingAttemptSchema.index({
-  userId: 1,
-  createdAt: -1,
-});
-
-/* Exam attempt history */
-
-typingAttemptSchema.index({
-  examId: 1,
-  createdAt: -1,
-});
-
-/* Passage attempt history */
-
-typingAttemptSchema.index({
-  passageId: 1,
-  createdAt: -1,
-});
-
-/* Candidate's attempts for an exam */
-
-typingAttemptSchema.index({
-  userId: 1,
-  examId: 1,
-  status: 1,
-});
-
-/* Expiry and cleanup queries */
-
-typingAttemptSchema.index({
-  status: 1,
-  deadlineAt: 1,
-});
-
-/* =========================================================
-   INDEXES
-========================================================= */
-
-// Candidate attempt history
-typingAttemptSchema.index(
-  { userId: 1, createdAt: -1 },
-  { name: "candidate_attempt_history" },
-);
-
-// Exam attempt history
-typingAttemptSchema.index(
-  { examId: 1, createdAt: -1 },
-  { name: "exam_attempt_history" },
-);
-
-// Passage attempt history
-typingAttemptSchema.index(
-  { passageId: 1, createdAt: -1 },
-  { name: "passage_attempt_history" },
-);
-
-// Candidate's attempts for an exam
-typingAttemptSchema.index(
-  { userId: 1, examId: 1, status: 1 },
-  { name: "candidate_exam_attempts" },
-);
-
-// Expiry queries
-typingAttemptSchema.index(
-  { status: 1, deadlineAt: 1 },
-  { name: "attempt_expiry_lookup" },
-);
-
-// Only one active attempt per candidate per exam
-typingAttemptSchema.index(
-  { userId: 1, examId: 1 },
+typingInputEventBatchSchema.index(
+  { attemptId: 1, batchNumber: 1 },
   {
     unique: true,
-    partialFilterExpression: {
-      status: "in_progress",
-    },
-    name: "unique_active_attempt_per_user_exam",
+    name: "uniq_attempt_input_batch",
   },
 );
 
-// Prevent duplicate submission IDs for a candidate
-typingAttemptSchema.index(
-  { userId: 1, submissionId: 1 },
+typingInputEventBatchSchema.index(
+  { attemptId: 1, firstSequence: 1 },
   {
     unique: true,
-    partialFilterExpression: {
-      submissionId: { $type: "string" },
-    },
-    name: "unique_candidate_submission_id",
+    name: "uniq_attempt_input_sequence_start",
   },
+);
+
+const TypingInputEventBatch = createModel(
+  "TypingInputEventBatch",
+  typingInputEventBatchSchema,
 );
 
 /* =========================================================
-   MODEL EXPORT
+   TIMELINE COLLECTION
 ========================================================= */
 
-const TypingAttempt =
-  models.TypingAttempt || model("TypingAttempt", typingAttemptSchema);
+const timelinePointSchema = new Schema(
+  {
+    sequence: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    recordedAt: {
+      type: Date,
+      required: true,
+    },
+
+    elapsedMs: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    typedCharacters: nonNegativeNumber,
+    typedWords: nonNegativeNumber,
+    correctWords: nonNegativeNumber,
+    errors: nonNegativeNumber,
+    currentWpm: nonNegativeNumber,
+    currentCpm: nonNegativeNumber,
+  },
+  {
+    _id: false,
+    strict: "throw",
+  },
+);
+
+const typingAttemptTimelineSchema = new Schema(
+  {
+    attemptId: {
+      type: ObjectId,
+      ref: "TypingAttempt",
+      required: true,
+    },
+
+    chunkIndex: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    points: {
+      type: [timelinePointSchema],
+      required: true,
+      validate: {
+        validator: (value) =>
+          value.length > 0 && value.length <= MAX_TIMELINE_ITEMS_PER_CHUNK,
+        message: "Timeline chunk must contain 1 to 500 points.",
+      },
+    },
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+      immutable: true,
+    },
+  },
+  {
+    versionKey: false,
+    strict: "throw",
+  },
+);
+
+typingAttemptTimelineSchema.index(
+  { attemptId: 1, chunkIndex: 1 },
+  {
+    unique: true,
+    name: "uniq_attempt_timeline_chunk",
+  },
+);
+
+const TypingAttemptTimeline = createModel(
+  "TypingAttemptTimeline",
+  typingAttemptTimelineSchema,
+);
+
+/* =========================================================
+   EXPORTS
+========================================================= */
+
+export {
+  TypingAttempt,
+  TypingWordAnalysis,
+  TypingCharacterAnalysis,
+  TypingInputEventBatch,
+  TypingAttemptTimeline,
+};
 
 export default TypingAttempt;

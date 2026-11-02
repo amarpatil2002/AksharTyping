@@ -99,7 +99,7 @@ export const TypingProvider = ({ children }: TypingProviderProps) => {
   const [examFilters, setExamFilters] = useState<TypingExamFilters>({
     page: 1,
     limit: 100,
-    sort: "asc",
+    sort: "title_asc",
   });
 
   const examFiltersRef = useRef(examFilters);

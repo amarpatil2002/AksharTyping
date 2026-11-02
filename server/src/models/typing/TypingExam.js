@@ -1,269 +1,10 @@
 import mongoose from "mongoose";
 
-const { Schema, model, models } = mongoose;
+import { measurementTargetSchema, LANGUAGES, EXAM_TYPES } from "./Typing.js";
 
-export const LANGUAGES = [
-  "english",
-  "assamese",
-  "bengali",
-  "bodo",
-  "dogri",
-  "gujarati",
-  "hindi",
-  "kannada",
-  "kashmiri",
-  "konkani",
-  "maithili",
-  "malayalam",
-  "manipuri",
-  "marathi",
-  "nepali",
-  "odia",
-  "punjabi",
-  "sanskrit",
-  "santali",
-  "sindhi",
-  "tamil",
-  "telugu",
-  "urdu",
-];
+const { Schema } = mongoose;
 
-/* ============================================================
-   SCORING CONFIGURATION
-============================================================ */
-
-const errorPenaltiesSchema = new Schema(
-  {
-    spelling: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    wrongWord: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    omission: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    extraWord: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    capitalization: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    notReached: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-  },
-  {
-    _id: false,
-    strict: true,
-  },
-);
-
-const qualificationSchema = new Schema(
-  {
-    minimumMarks: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    minimumWpm: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    minimumAccuracy: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-
-    maximumErrors: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-
-    maximumErrorPercentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: null,
-    },
-
-    requireAll: {
-      type: Boolean,
-      default: true,
-    },
-  },
-  {
-    _id: false,
-    strict: true,
-  },
-);
-
-const scoringSchema = new Schema(
-  {
-    method: {
-      type: String,
-      enum: [
-        "standard",
-        "net_wpm",
-        "accuracy",
-        "weighted",
-        "custom",
-        "fixed_error_penalty",
-        "grouped_error_penalty",
-        "correct_words_ratio",
-        "qualifying_only",
-        "speed_based",
-      ],
-      default: "standard",
-      required: true,
-    },
-
-    policyVersion: {
-      type: Number,
-      min: 1,
-      default: 1,
-    },
-
-    // Retained for backward compatibility.
-    wordLength: {
-      type: Number,
-      min: 1,
-      default: 5,
-    },
-
-    // Typing speed requirement.
-    minimumWpm: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    // Accuracy requirement.
-    minimumAccuracy: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-    },
-
-    // Default penalty used by custom and legacy scoring.
-    errorPenalty: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    // Individual error penalties.
-    errorPenalties: {
-      type: errorPenaltiesSchema,
-      default: () => ({}),
-    },
-
-    // Used by weighted scoring.
-    speedWeight: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 50,
-    },
-
-    accuracyWeight: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 50,
-    },
-
-    // Used by grouped error penalty scoring.
-    errorsPerGroup: {
-      type: Number,
-      min: 1,
-      default: 1,
-    },
-
-    groupPenalty: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
-
-    // Speed calculation convention.
-    speedCalculation: {
-      type: String,
-      enum: [
-        "gross_words_per_minute",
-        "correct_words_per_minute",
-        "gross_minus_error_penalty",
-      ],
-      default: "correct_words_per_minute",
-    },
-
-    // Accuracy calculation convention.
-    accuracyCalculation: {
-      type: String,
-      enum: [
-        "correct_words_divided_by_words_typed",
-        "correct_words_divided_by_reference_words",
-      ],
-      default: "correct_words_divided_by_words_typed",
-    },
-
-    // How words remaining at the end are handled.
-    notReachedPolicy: {
-      type: String,
-      enum: [
-        "no_separate_penalty",
-        "count_as_error",
-        "apply_configured_penalty",
-      ],
-      default: "no_separate_penalty",
-    },
-
-    // Final result rounding.
-    rounding: {
-      type: String,
-      enum: ["none", "integer", "two_decimals"],
-      default: "two_decimals",
-    },
-
-    // Qualification conditions.
-    qualification: {
-      type: qualificationSchema,
-      default: () => ({}),
-    },
-  },
-  {
-    _id: false,
-    strict: true,
-  },
-);
-
-/* ============================================================
-   MAIN EXAM MODEL
-============================================================ */
+const objectId = Schema.Types.ObjectId;
 
 const typingExamSchema = new Schema(
   {
@@ -277,165 +18,373 @@ const typingExamSchema = new Schema(
     slug: {
       type: String,
       required: true,
-      unique: true,
-      lowercase: true,
       trim: true,
+      lowercase: true,
+      maxlength: 220,
     },
 
     description: {
       type: String,
       trim: true,
-      default: "",
+      maxlength: 3000,
+      default: null,
+    },
+
+    authority: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 150,
+    },
+
+    examCode: {
+      type: String,
+      required: true,
+      trim: true,
+      uppercase: true,
+      maxlength: 100,
+    },
+
+    postName: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 150,
+    },
+
+    recruitmentCycle: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+      default: null,
+    },
+
+    examType: {
+      type: String,
+      required: true,
+      enum: EXAM_TYPES,
     },
 
     language: {
       type: String,
       required: true,
-      trim: true,
+      lowercase: true,
       enum: LANGUAGES,
-      default: "english",
+    },
+
+    languageConfigId: {
+      type: objectId,
+      ref: "LanguageConfig",
+      required: true,
+    },
+
+    inputMethod: {
+      type: String,
+      required: true,
+      enum: [
+        "INSCRIPT",
+        "REMIINGTON",
+        "PHONETIC",
+        "TRANSLITERATION",
+        "TYPEWRITER",
+        "CUSTOM",
+        "STANDARD_QWERTY",
+      ],
+    },
+
+    keyboardLayout: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    textDirection: {
+      type: String,
+      enum: ["LTR", "RTL"],
+      default: "LTR",
     },
 
     durationSeconds: {
       type: Number,
       required: true,
       min: 1,
-      default: 600,
+      max: 86400,
     },
 
-    targetWpm: {
-      type: Number,
-      min: 0,
-      default: 30,
-    },
-
-    maximumMarks: {
-      type: Number,
-      required: [true, "Maximum marks are required."],
-      min: [1, "Maximum marks must be at least 1."],
-      default: 100,
-    },
-
-    passingPercentage: {
-      type: Number,
+    target: {
+      type: measurementTargetSchema,
       required: true,
-      min: 0,
-      max: 100,
-      default: 40,
     },
 
-    scoring: {
-      type: scoringSchema,
-      default: () => ({}),
+    wordConfigId: {
+      type: objectId,
+      ref: "WordExamConfig",
+      default: null,
     },
 
-    instructions: {
-      type: [String],
-      default: [],
+    characterConfigId: {
+      type: objectId,
+      ref: "CharacterExamConfig",
+      default: null,
+    },
+
+    hybridConfigId: {
+      type: objectId,
+      ref: "HybridExamConfig",
+      default: null,
+    },
+
+    evaluationPolicyId: {
+      type: objectId,
+      ref: "EvaluationPolicy",
+      required: true,
+    },
+
+    passageSettings: {
+      selectionMode: {
+        type: String,
+        enum: ["FIXED", "RANDOM", "CATEGORY_BASED", "ADMIN_ASSIGNED"],
+        default: "RANDOM",
+      },
+
+      passageCount: {
+        type: Number,
+        min: 1,
+        default: 1,
+      },
+
+      allowedCategories: [
+        {
+          type: String,
+          trim: true,
+          maxlength: 100,
+        },
+      ],
+
+      minimumWordCount: {
+        type: Number,
+        min: 0,
+        default: 0,
+      },
+
+      maximumWordCount: {
+        type: Number,
+        min: 0,
+        default: null,
+      },
+
+      fixedPassageIds: [
+        {
+          type: objectId,
+          ref: "TypingPassage",
+        },
+      ],
+    },
+
+    attemptSettings: {
+      maximumAttempts: {
+        type: Number,
+        min: 1,
+        default: 1,
+      },
+
+      allowRetake: {
+        type: Boolean,
+        default: false,
+      },
+
+      allowPause: {
+        type: Boolean,
+        default: false,
+      },
+
+      autoSubmit: {
+        type: Boolean,
+        default: true,
+      },
+
+      showResultImmediately: {
+        type: Boolean,
+        default: true,
+      },
+
+      showCorrectText: {
+        type: Boolean,
+        default: true,
+      },
+
+      showDetailedErrors: {
+        type: Boolean,
+        default: true,
+      },
+    },
+
+    access: {
+      visibility: {
+        type: String,
+        enum: ["PUBLIC", "PRIVATE", "UNLISTED", "ASSIGNED"],
+        default: "PUBLIC",
+      },
+
+      requiresLogin: {
+        type: Boolean,
+        default: true,
+      },
+
+      allowedUserIds: [
+        {
+          type: objectId,
+          ref: "User",
+        },
+      ],
+
+      allowedRoles: [
+        {
+          type: String,
+          trim: true,
+        },
+      ],
+    },
+
+    availability: {
+      startsAt: {
+        type: Date,
+        default: null,
+      },
+
+      endsAt: {
+        type: Date,
+        default: null,
+      },
+
+      timezone: {
+        type: String,
+        default: "Asia/Kolkata",
+        trim: true,
+      },
     },
 
     status: {
       type: String,
-      enum: ["draft", "published", "archived"],
-      default: "draft",
+      enum: ["DRAFT", "PUBLISHED", "PAUSED", "ARCHIVED"],
+      default: "DRAFT",
+      index: true,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
       index: true,
     },
 
     createdBy: {
-      type: Schema.Types.ObjectId,
+      type: objectId,
       ref: "User",
       required: true,
     },
 
     updatedBy: {
-      type: Schema.Types.ObjectId,
+      type: objectId,
       ref: "User",
+      default: null,
+    },
+
+    publishedAt: {
+      type: Date,
+      default: null,
     },
   },
   {
     timestamps: true,
     versionKey: false,
-    strict: true,
+    strict: "throw",
   },
 );
 
-/* ============================================================
-   VALIDATION
-============================================================ */
+/* VALIDATION */
 
-typingExamSchema.pre("validate", function (next) {
-  const scoring = this.scoring;
+typingExamSchema.pre("validate", function () {
+  const configFields = {
+    WORD: ["wordConfigId"],
+    CHARACTER: ["characterConfigId"],
+    HYBRID: ["hybridConfigId"],
+  };
 
-  if (!scoring) {
-    return next();
-  }
+  const requiredConfig = configFields[this.examType] || [];
 
-  // Weighted scoring must total exactly 100.
-  if (scoring.method === "weighted") {
-    const speedWeight = Number(scoring.speedWeight ?? 0);
-    const accuracyWeight = Number(scoring.accuracyWeight ?? 0);
+  const allConfigFields = [
+    "wordConfigId",
+    "characterConfigId",
+    "hybridConfigId",
+  ];
 
-    if (Math.abs(speedWeight + accuracyWeight - 100) > 0.000001) {
+  for (const field of allConfigFields) {
+    const shouldExist = requiredConfig.includes(field);
+    const exists = Boolean(this[field]);
+
+    if (shouldExist !== exists) {
       this.invalidate(
-        "scoring.accuracyWeight",
-        "Speed weight and accuracy weight must total 100.",
+        field,
+        shouldExist
+          ? `${field} is required for ${this.examType} exams.`
+          : `${field} is not allowed for ${this.examType} exams.`,
       );
     }
   }
 
-  // Grouped penalty configuration.
   if (
-    scoring.method === "grouped_error_penalty" &&
-    (!Number.isInteger(scoring.errorsPerGroup) || scoring.errorsPerGroup < 1)
+    this.passageSettings?.maximumWordCount !== null &&
+    this.passageSettings?.maximumWordCount !== undefined &&
+    this.passageSettings.maximumWordCount <
+      this.passageSettings.minimumWordCount
   ) {
     this.invalidate(
-      "scoring.errorsPerGroup",
-      "Errors per group must be a positive integer.",
+      "passageSettings.maximumWordCount",
+      "Maximum word count cannot be smaller than minimum word count.",
     );
   }
 
-  // Qualification marks cannot exceed maximum marks.
-  const minimumMarks = Number(scoring.qualification?.minimumMarks ?? 0);
-
-  if (minimumMarks > this.maximumMarks) {
+  if (
+    this.availability?.startsAt &&
+    this.availability?.endsAt &&
+    this.availability.endsAt <= this.availability.startsAt
+  ) {
     this.invalidate(
-      "scoring.qualification.minimumMarks",
-      "Minimum qualification marks cannot exceed maximum marks.",
+      "availability.endsAt",
+      "Exam end date must be after start date.",
     );
   }
 
-  // The passing percentage and passing marks should agree
-  // when minimum qualification marks are not separately configured.
-  if (scoring.qualification?.minimumMarks == null && this.maximumMarks > 0) {
-    const passingMarks = (this.maximumMarks * this.passingPercentage) / 100;
-
-    if (!Number.isFinite(passingMarks)) {
-      this.invalidate("passingPercentage", "Invalid passing percentage.");
-    }
+  if (this.status === "PUBLISHED" && !this.publishedAt) {
+    this.publishedAt = new Date();
   }
-
-  next();
 });
 
-/* ============================================================
-   INDEXES
-============================================================ */
+/* INDEXES */
+
+typingExamSchema.index({ slug: 1 }, { unique: true });
+
+typingExamSchema.index({
+  authority: 1,
+  examCode: 1,
+  recruitmentCycle: 1,
+});
 
 typingExamSchema.index({
   status: 1,
-  createdAt: -1,
-});
-
-typingExamSchema.index({
+  isActive: 1,
   language: 1,
-  status: 1,
+  examType: 1,
 });
 
-/* ============================================================
-   EXPORT
-============================================================ */
+typingExamSchema.index({
+  "availability.startsAt": 1,
+  "availability.endsAt": 1,
+});
 
-export const TypingExam =
-  models.TypingExam || model("TypingExam", typingExamSchema);
+/* MODEL */
+
+const TypingExam =
+  mongoose.models.TypingExam || mongoose.model("TypingExam", typingExamSchema);
 
 export default TypingExam;
