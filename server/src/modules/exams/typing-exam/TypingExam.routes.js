@@ -20,7 +20,6 @@ import {
   attemptQuerySchema,
   updateAttemptProgressSchema,
   submitAttemptSchema,
-  examPassageParamsSchema,
 } from "./typingExam.validation.js";
 
 import { verifyToken } from "../../../middleware/verifyToken.js";
@@ -28,12 +27,15 @@ import { validateRequest } from "../../../middleware/validateRequest.js";
 
 const router = Router();
 
-// Authenticate all user typing routes.
+// ============================================================
+// AUTHENTICATION
+// ============================================================
+
 router.use(verifyToken);
 
-// ============================================
-// Published exams
-// ============================================
+// ============================================================
+// PUBLISHED EXAMINATIONS
+// ============================================================
 
 // GET /api/v1/typing
 router.get("/", validateRequest(examQuerySchema, "query"), getPublishedExams);
@@ -53,9 +55,9 @@ router.get(
   getExamPassages,
 );
 
-// ============================================
-// Typing attempts
-// ============================================
+// ============================================================
+// TYPING ATTEMPTS
+// ============================================================
 
 // POST /api/v1/typing/:examId/passages/:passageId/start
 router.post(
@@ -64,7 +66,7 @@ router.post(
   startAttempt,
 );
 
-// GET /api/v1/typing/attempts
+// GET /api/v1/typing/attempts/history
 router.get(
   "/attempts/history",
   validateRequest(attemptQuerySchema, "query"),

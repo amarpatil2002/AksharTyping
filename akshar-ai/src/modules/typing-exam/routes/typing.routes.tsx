@@ -2,7 +2,6 @@ import type { RouteObject } from "react-router-dom";
 
 import TypingExamListPage from "../pages/TypingExamListPage";
 import TypingExamDetailPage from "../pages/TypingExamDetailPage";
-import TypingPassagesPage from "../pages/TypingPassagesPage";
 import TypingTestPage from "../pages/TypingTestPage";
 import TypingExamSetupPage from "../pages/TypingExamSetupPage";
 // import TypingAttemptHistoryPage from "../pages/TypingAttemptHistoryPage";
@@ -21,11 +20,6 @@ export const typingRoutes: RouteObject[] = [
     element: <TypingExamDetailPage />,
   },
 
-  // Examination passages
-  {
-    path: ":examId/passages",
-    element: <TypingPassagesPage />,
-  },
   {
     path: ":examId/passages/:passageId/setup",
     element: <TypingExamSetupPage />,

@@ -1,7 +1,7 @@
 import { Router } from "express";
 
-import { requireAdminSession } from "../../../middleware/requireAdminSession.js";
-import { validateRequest } from "../../../middleware/validateRequest.js";
+import { requireAdminSession } from "../../../../middleware/requireAdminSession.js";
+import { validateRequest } from "../../../../middleware/validateRequest.js";
 
 import {
   createExamSchema,
@@ -14,7 +14,7 @@ import {
   passageParamsSchema,
   examQuerySchema,
   passageQuerySchema,
-} from "../../exams/typing-exam/typingExam.validation.js";
+} from "./AdmintypingExam.validation.js";
 
 import {
   createExam,
@@ -34,25 +34,25 @@ import {
 
 const router = Router();
 
-// All endpoints in this router require admin authentication.
-router.use(requireAdminSession);
+// ============================================================
+// ADMIN AUTHENTICATION
+// ============================================================
 
-// ==========================================
-// DASHBOARD
-// ==========================================
+// All routes require an authenticated admin session.
+router.use(requireAdminSession);
 
 router.get("/dashboard", getTypingDashboard);
 
-// ==========================================
-// EXAM ROUTES
-// ==========================================
-
+// Create exam.
 router.post("/", validateRequest(createExamSchema), createExam);
 
+// Get all exams.
 router.get("/", validateRequest(examQuerySchema, "query"), getExams);
 
+// Get exam by ID.
 router.get("/:examId", validateRequest(objectIdSchema, "params"), getExamById);
 
+// Update exam details.
 router.patch(
   "/:examId",
   validateRequest(objectIdSchema, "params"),
@@ -60,6 +60,7 @@ router.patch(
   updateExam,
 );
 
+// Update exam status.
 router.patch(
   "/:examId/status",
   validateRequest(objectIdSchema, "params"),
@@ -67,16 +68,18 @@ router.patch(
   updateExamStatus,
 );
 
+// Delete exam.
 router.delete(
   "/:examId",
   validateRequest(objectIdSchema, "params"),
   deleteExam,
 );
 
-// ==========================================
+// ============================================================
 // PASSAGE ROUTES
-// ==========================================
+// ============================================================
 
+// Create passage under an exam.
 router.post(
   "/:examId/passages",
   validateRequest(objectIdSchema, "params"),
@@ -84,6 +87,7 @@ router.post(
   createPassage,
 );
 
+// Get all passages belonging to an exam.
 router.get(
   "/:examId/passages",
   validateRequest(objectIdSchema, "params"),
@@ -91,12 +95,14 @@ router.get(
   getPassages,
 );
 
+// Get a specific passage.
 router.get(
   "/:examId/passages/:passageId",
   validateRequest(passageParamsSchema, "params"),
   getPassageById,
 );
 
+// Update passage details.
 router.patch(
   "/:examId/passages/:passageId",
   validateRequest(passageParamsSchema, "params"),
@@ -104,6 +110,7 @@ router.patch(
   updatePassage,
 );
 
+// Update passage status.
 router.patch(
   "/:examId/passages/:passageId/status",
   validateRequest(passageParamsSchema, "params"),
@@ -111,6 +118,7 @@ router.patch(
   updatePassageStatus,
 );
 
+// Delete passage.
 router.delete(
   "/:examId/passages/:passageId",
   validateRequest(passageParamsSchema, "params"),

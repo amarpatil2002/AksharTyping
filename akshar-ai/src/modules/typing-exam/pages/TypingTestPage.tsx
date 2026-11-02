@@ -5,94 +5,93 @@ import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
+  ArrowLeft,
+  ArrowDown,
+  Check,
+  Clock3,
+  Columns2,
+  FileText,
+  Highlighter,
+  Keyboard,
+  Maximize,
+  Minimize,
+  Moon,
+  RotateCcw,
+  Rows2,
+  Send,
+  Sun,
+  Type,
+  UserRound,
+  X,
+} from "lucide-react";
+
+import {
   submitTypingAttempt,
   updateTypingProgress,
 } from "../services/typing.service";
 
-import type {
-  StartTypingAttemptResponse,
-  UpdateTypingProgressResponse,
-} from "../types/typing.types";
+import { useAuth } from "../../auth/hooks/useAuth";
 
 // ============================================================
 // TYPES
 // ============================================================
 
-type ExamPreset = "tcs" | "ssc" | "ibps" | "custom";
-type LayoutMode = "horizontal" | "vertical";
-type FontSize = "small" | "medium" | "large";
 type ThemeMode = "light" | "dark";
-
+type FontSize = "small" | "medium" | "large";
 type FontFamily = "arial" | "roboto" | "inter" | "calibri" | "times" | "mono";
 
-interface TypingTestLocationState {
-  attempt: StartTypingAttemptResponse["attempt"];
-  passage: StartTypingAttemptResponse["passage"];
-  remainingSeconds: number;
-  settings?: ExamSettings;
+type WorkspaceLayout = "horizontal" | "vertical";
+
+interface PassageData {
+  _id: string;
+  title: string;
+  content: string;
+  language: string;
+  wordCount?: number;
+  difficulty?: string;
+}
+
+interface AttemptData {
+  _id: string;
+  typedText?: string;
+  progressVersion: number;
+  configSnapshot?: {
+    durationSeconds?: number;
+  };
 }
 
 interface ExamSettings {
-  examPreset: ExamPreset;
-  layout: LayoutMode;
+  theme: ThemeMode;
   fontSize: FontSize;
   fontFamily: FontFamily;
-  theme: ThemeMode;
-  allowBackspace: boolean;
-  allowPaste: boolean;
   showPassage: boolean;
   highlightErrors: boolean;
+  allowBackspace: boolean;
+  allowPaste: boolean;
   showStatistics: boolean;
-  autoFocus: boolean;
   autoScroll: boolean;
 }
 
+interface TypingTestLocationState {
+  attempt: AttemptData;
+  passage: PassageData;
+  remainingSeconds: number;
+  settings?: Partial<ExamSettings>;
+}
+
 const DEFAULT_SETTINGS: ExamSettings = {
-  examPreset: "tcs",
-  layout: "horizontal",
+  theme: "light",
   fontSize: "medium",
   fontFamily: "arial",
-  theme: "light",
-  allowBackspace: true,
-  allowPaste: false,
   showPassage: true,
   highlightErrors: true,
+  allowBackspace: true,
+  allowPaste: false,
   showStatistics: true,
-  autoFocus: true,
   autoScroll: true,
 };
 
-const PRESETS: Record<Exclude<ExamPreset, "custom">, Partial<ExamSettings>> = {
-  tcs: {
-    layout: "horizontal",
-    fontSize: "medium",
-    fontFamily: "arial",
-    showPassage: true,
-    highlightErrors: true,
-    showStatistics: true,
-    autoScroll: true,
-  },
-  ssc: {
-    layout: "vertical",
-    fontSize: "medium",
-    fontFamily: "calibri",
-    showPassage: true,
-    highlightErrors: false,
-    showStatistics: true,
-    autoScroll: true,
-  },
-  ibps: {
-    layout: "horizontal",
-    fontSize: "medium",
-    fontFamily: "roboto",
-    showPassage: true,
-    highlightErrors: true,
-    showStatistics: true,
-    autoScroll: true,
-  },
-};
-
-const FONTS: Record<FontFamily, string> = {
+const FONT_FAMILIES: Record<FontFamily, string> = {
   arial: "Arial, Helvetica, sans-serif",
   roboto: "Roboto, Arial, sans-serif",
   inter: "Inter, Arial, sans-serif",
@@ -102,13 +101,118 @@ const FONTS: Record<FontFamily, string> = {
 };
 
 const FONT_SIZES: Record<FontSize, string> = {
-  small: "text-sm leading-7",
-  medium: "text-base leading-8",
-  large: "text-lg leading-9",
+  small: "15px",
+  medium: "17px",
+  large: "20px",
 };
 
 // ============================================================
-// COMPONENT
+// WORD-BASED EVALUATION HELPERS
+// ============================================================
+
+const getWords = (value: string): string[] =>
+  value.trim() ? value.normalize("NFC").trim().split(/\s+/) : [];
+
+interface WordEvaluation {
+  totalWords: number;
+  wordsTyped: number;
+  correctWords: number;
+  incorrectWords: number;
+  omissions: number;
+  extraWords: number;
+  totalErrors: number;
+  referenceWordStates: Array<"correct" | "incorrect" | "omitted" | "pending">;
+}
+
+/**
+ * Aligns typed words with reference words using word-level edit distance.
+ * This is a live UI estimate; the backend remains authoritative at submission.
+ */
+const evaluateWords = (
+  referenceText: string,
+  typedText: string,
+): WordEvaluation => {
+  const referenceWords = getWords(referenceText);
+  const typedWords = getWords(typedText);
+  const rows = referenceWords.length + 1;
+  const columns = typedWords.length + 1;
+  const dp: number[][] = Array.from({ length: rows }, () =>
+    Array(columns).fill(0),
+  );
+
+  for (let i = 0; i < rows; i += 1) dp[i][0] = i;
+  for (let j = 0; j < columns; j += 1) dp[0][j] = j;
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < columns; j += 1) {
+      const same = referenceWords[i - 1] === typedWords[j - 1];
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (same ? 0 : 1),
+      );
+    }
+  }
+
+  const states: WordEvaluation["referenceWordStates"] = Array(
+    referenceWords.length,
+  ).fill("pending");
+  let correctWords = 0;
+  let incorrectWords = 0;
+  let omissions = 0;
+  let extraWords = 0;
+  let i = referenceWords.length;
+  let j = typedWords.length;
+
+  while (i > 0 || j > 0) {
+    if (
+      i > 0 &&
+      j > 0 &&
+      dp[i][j] ===
+        dp[i - 1][j - 1] + (referenceWords[i - 1] === typedWords[j - 1] ? 0 : 1)
+    ) {
+      if (referenceWords[i - 1] === typedWords[j - 1]) {
+        states[i - 1] = "correct";
+        correctWords += 1;
+      } else {
+        states[i - 1] = "incorrect";
+        incorrectWords += 1;
+      }
+      i -= 1;
+      j -= 1;
+    } else if (j === 0 && i > 0) {
+      // Words after the current typing position are not omissions yet.
+      states[i - 1] = "pending";
+      i -= 1;
+    } else if (i > 0 && dp[i][j] === dp[i - 1][j] + 1) {
+      states[i - 1] = "omitted";
+      omissions += 1;
+      i -= 1;
+    } else {
+      extraWords += 1;
+      j -= 1;
+    }
+  }
+
+  const totalErrors = incorrectWords + omissions + extraWords;
+
+  return {
+    totalWords: referenceWords.length,
+    wordsTyped: typedWords.length,
+    correctWords,
+    incorrectWords,
+    omissions,
+    extraWords,
+    totalErrors,
+    referenceWordStates: states,
+  };
+};
+
+const tokenizePassage = (value: string): string[] =>
+  value.match(/\s+|\S+/g) ?? [];
+
+// ============================================================
+// MAIN COMPONENT
 // ============================================================
 
 const TypingTestPage = () => {
@@ -120,10 +224,14 @@ const TypingTestPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const state = location.state as TypingTestLocationState | null;
+  // Authenticated candidate
+  const { user } = useAuth();
+  const candidateName = user?.name?.trim() || "Candidate";
 
-  const attempt = state?.attempt;
-  const passage = state?.passage;
+  const routeState = location.state as TypingTestLocationState | null;
+
+  const attempt = routeState?.attempt;
+  const passage = routeState?.passage;
 
   // ----------------------------------------------------------
   // STATE
@@ -132,59 +240,74 @@ const TypingTestPage = () => {
   const [typedText, setTypedText] = useState(attempt?.typedText ?? "");
 
   const [remainingSeconds, setRemainingSeconds] = useState(
-    state?.remainingSeconds ?? 0,
+    routeState?.remainingSeconds ?? 0,
   );
 
   const [progressVersion, setProgressVersion] = useState(
     attempt?.progressVersion ?? 0,
   );
 
+  const [isTypingStarted, setIsTypingStarted] = useState(
+    Boolean(attempt?.typedText?.length),
+  );
+
   const [settings, setSettings] = useState<ExamSettings>({
     ...DEFAULT_SETTINGS,
-    ...(state?.settings ?? {}),
+    ...(routeState?.settings ?? {}),
   });
 
-  const examStarted = true;
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [workspaceLayout, setWorkspaceLayout] =
+    useState<WorkspaceLayout>("horizontal");
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [submitModalOpen, setSubmitModalOpen] = useState(false);
+  const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
 
   const [saveError, setSaveError] = useState("");
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const [fullscreenError, setFullscreenError] = useState("");
 
   // ----------------------------------------------------------
   // REFS
   // ----------------------------------------------------------
 
-  const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const passageRef = useRef<HTMLDivElement>(null);
-
-  const characterRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const latestText = useRef(typedText);
   const latestVersion = useRef(progressVersion);
-
   const savingRef = useRef(false);
   const submittingRef = useRef(false);
   const mountedRef = useRef(true);
 
   // ----------------------------------------------------------
-  // KEEP LATEST VALUES
+  // THEME
   // ----------------------------------------------------------
 
-  useEffect(() => {
-    latestText.current = typedText;
-  }, [typedText]);
+  const dark = settings.theme === "dark";
 
-  useEffect(() => {
-    latestVersion.current = progressVersion;
-  }, [progressVersion]);
+  const ui = {
+    page: dark ? "bg-[#101828] text-slate-100" : "bg-[#F8FAFC] text-[#101828]",
+
+    panel: dark ? "border-slate-700 bg-[#1D2939]" : "border-[#E4E7EC] bg-white",
+
+    muted: dark ? "text-slate-400" : "text-[#667085]",
+
+    border: dark ? "border-slate-700" : "border-[#E4E7EC]",
+
+    input: dark ? "bg-[#101828] text-slate-100" : "bg-white text-[#101828]",
+  };
+
+  const fontStyle = {
+    fontFamily: FONT_FAMILIES[settings.fontFamily],
+    fontSize: FONT_SIZES[settings.fontSize],
+  };
+
+  // ----------------------------------------------------------
+  // LIFECYCLE
+  // ----------------------------------------------------------
 
   useEffect(() => {
     mountedRef.current = true;
@@ -194,33 +317,48 @@ const TypingTestPage = () => {
     };
   }, []);
 
+  useEffect(() => {
+    latestText.current = typedText;
+  }, [typedText]);
+
+  useEffect(() => {
+    latestVersion.current = progressVersion;
+  }, [progressVersion]);
+
   // ----------------------------------------------------------
-  // THEME
+  // PASSAGE INFORMATION
   // ----------------------------------------------------------
 
-  const dark = settings.theme === "dark";
+  const targetText = passage?.content ?? "";
 
-  const ui = {
-    page: dark ? "bg-[#0b1120] text-slate-100" : "bg-[#f5f7fb] text-slate-900",
+  const passageWordCount = passage?.wordCount ?? getWords(targetText).length;
 
-    panel: dark ? "border-slate-800 bg-[#111a2b]" : "border-slate-200 bg-white",
+  const wordEvaluation = evaluateWords(targetText, typedText);
+  const typedWordCount = wordEvaluation.wordsTyped;
+  const correctWords = wordEvaluation.correctWords;
+  const incorrectWords = wordEvaluation.incorrectWords;
+  const totalWordErrors = wordEvaluation.totalErrors;
 
-    muted: dark ? "text-slate-400" : "text-slate-500",
+  // Live accuracy uses correct words divided by words entered.
+  const accuracy =
+    typedWordCount > 0 ? (correctWords / typedWordCount) * 100 : 100;
 
-    secondary: dark
-      ? "bg-slate-800 text-slate-200"
-      : "bg-slate-50 text-slate-700",
+  const elapsedSeconds = Math.max(
+    0,
+    (routeState?.remainingSeconds ?? 0) - remainingSeconds,
+  );
 
-    border: dark ? "border-slate-800" : "border-slate-200",
+  const grossWpm =
+    elapsedSeconds > 0 ? typedWordCount / (elapsedSeconds / 60) : 0;
 
-    input: dark
-      ? "border-slate-700 bg-[#0b1120] text-slate-100 placeholder-slate-500"
-      : "border-slate-200 bg-white text-slate-900 placeholder-slate-400",
-  };
+  const progress = passageWordCount
+    ? Math.min(100, (typedWordCount / passageWordCount) * 100)
+    : 0;
 
-  const fontStyle = {
-    fontFamily: FONTS[settings.fontFamily],
-  };
+  const timer = `${String(Math.floor(remainingSeconds / 60)).padStart(
+    2,
+    "0",
+  )}:${String(remainingSeconds % 60).padStart(2, "0")}`;
 
   // ----------------------------------------------------------
   // SETTINGS
@@ -233,28 +371,28 @@ const TypingTestPage = () => {
     setSettings((previous) => ({
       ...previous,
       [key]: value,
-      ...(key === "examPreset" ? {} : { examPreset: "custom" as ExamPreset }),
     }));
   };
 
-  const applyPreset = (preset: ExamPreset) => {
-    if (preset === "custom") {
-      setSettings((previous) => ({
-        ...previous,
-        examPreset: "custom",
-      }));
-      return;
-    }
+  const increaseFont = () => {
+    const sizes: FontSize[] = ["small", "medium", "large"];
 
-    setSettings((previous) => ({
-      ...previous,
-      ...PRESETS[preset],
-      examPreset: preset,
-    }));
+    const index = sizes.indexOf(settings.fontSize);
+
+    updateSetting("fontSize", sizes[Math.min(index + 1, 2)]);
+  };
+
+  const decreaseFont = () => {
+    const sizes: FontSize[] = ["small", "medium", "large"];
+
+    const index = sizes.indexOf(settings.fontSize);
+
+    updateSetting("fontSize", sizes[Math.max(index - 1, 0)]);
   };
 
   const resetSettings = () => {
     setSettings({ ...DEFAULT_SETTINGS });
+    setWorkspaceLayout("horizontal");
   };
 
   // ----------------------------------------------------------
@@ -262,14 +400,14 @@ const TypingTestPage = () => {
   // ----------------------------------------------------------
 
   useEffect(() => {
-    const handleChange = () => {
+    const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
     };
 
-    document.addEventListener("fullscreenchange", handleChange);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
 
     return () => {
-      document.removeEventListener("fullscreenchange", handleChange);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
@@ -282,89 +420,80 @@ const TypingTestPage = () => {
       }
     } catch (error) {
       console.error("Fullscreen error:", error);
-      setFullscreenError("Unable to change fullscreen mode.");
     }
   };
 
   // ----------------------------------------------------------
-  // LIVE METRICS
+  // TYPING HANDLER
   // ----------------------------------------------------------
 
-  const targetText = passage?.content ?? "";
-  const remainingCharacters = Math.max(targetText.length - typedText.length, 0);
-  const remainingWords = targetText.slice(typedText.length).trim()
-    ? targetText.slice(typedText.length).trim().split(/\s+/).length
-    : 0;
-  const passageWordCount = targetText.trim()
-    ? targetText.trim().split(/\s+/).length
-    : 0;
+  const handleTyping = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    if (submitted || submitting || remainingSeconds <= 0) {
+      return;
+    }
 
-  const correctCharacters = targetText.split("").filter((character, index) => {
-    return character === typedText[index];
-  }).length;
+    const value = event.target.value;
 
-  const incorrectCharacters = typedText.length - correctCharacters;
+    if (value.length > 0 && !isTypingStarted) {
+      setIsTypingStarted(true);
+    }
 
-  const accuracy =
-    typedText.length > 0 ? (correctCharacters / typedText.length) * 100 : 100;
+    setTypedText(value);
+    latestText.current = value;
+  };
 
-  const elapsedSeconds = Math.max(
-    0,
-    (attempt?.configSnapshot.durationSeconds ?? 0) - remainingSeconds,
-  );
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      !settings.allowBackspace &&
+      (event.key === "Backspace" || event.key === "Delete")
+    ) {
+      event.preventDefault();
+    }
 
-  const grossWpm =
-    elapsedSeconds > 0 ? typedText.length / 5 / (elapsedSeconds / 60) : 0;
+    if (
+      !settings.allowPaste &&
+      (event.ctrlKey || event.metaKey) &&
+      event.key.toLowerCase() === "v"
+    ) {
+      event.preventDefault();
+    }
+  };
 
-  const progress = targetText.length
-    ? Math.min(100, (typedText.length / targetText.length) * 100)
-    : 0;
-
-  const wordCount = typedText.trim() ? typedText.trim().split(/\s+/).length : 0;
-
-  const minutes = Math.floor(remainingSeconds / 60);
-  const seconds = remainingSeconds % 60;
-
-  const timer = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
-    2,
-    "0",
-  )}`;
-
-  const timeLow = remainingSeconds <= 60;
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!settings.allowPaste) {
+      event.preventDefault();
+    }
+  };
 
   // ----------------------------------------------------------
-  // AUTO FOCUS
+  // PASSAGE AUTO-SCROLL
   // ----------------------------------------------------------
 
   useEffect(() => {
-    if (!examStarted || !settings.autoFocus || submitted) return;
-
-    inputRef.current?.focus();
-  }, [examStarted, settings.autoFocus, submitted]);
-
-  // ----------------------------------------------------------
-  // AUTO SCROLL
-  // ----------------------------------------------------------
-
-  useEffect(() => {
-    if (!settings.autoScroll || !settings.showPassage) return;
+    if (!settings.showPassage || !settings.autoScroll) {
+      return;
+    }
 
     const container = passageRef.current;
-    const activeCharacter = characterRefs.current[typedText.length];
 
-    if (!container || !activeCharacter) return;
+    if (!container) return;
+
+    const currentCharacter = container.querySelector(
+      `[data-character-index="${typedText.length}"]`,
+    );
+
+    if (!currentCharacter) return;
 
     const containerRect = container.getBoundingClientRect();
-    const characterRect = activeCharacter.getBoundingClientRect();
+
+    const characterRect = currentCharacter.getBoundingClientRect();
 
     if (characterRect.bottom > containerRect.bottom - 35) {
       container.scrollTop += characterRect.bottom - containerRect.bottom + 35;
-    }
-
-    if (characterRect.top < containerRect.top + 20) {
+    } else if (characterRect.top < containerRect.top + 20) {
       container.scrollTop -= containerRect.top + 20 - characterRect.top;
     }
-  }, [typedText.length, settings.autoScroll, settings.showPassage]);
+  }, [typedText.length, settings.showPassage, settings.autoScroll]);
 
   // ----------------------------------------------------------
   // SAVE PROGRESS
@@ -373,6 +502,7 @@ const TypingTestPage = () => {
   const saveProgress = useCallback(async () => {
     if (
       !attempt?._id ||
+      !isTypingStarted ||
       submitted ||
       submittingRef.current ||
       savingRef.current
@@ -388,13 +518,10 @@ const TypingTestPage = () => {
     }
 
     try {
-      const response: UpdateTypingProgressResponse = await updateTypingProgress(
-        attempt._id,
-        {
-          typedText: latestText.current,
-          progressVersion: latestVersion.current,
-        },
-      );
+      const response = await updateTypingProgress(attempt._id, {
+        typedText: latestText.current,
+        progressVersion: latestVersion.current,
+      });
 
       latestVersion.current = response.progressVersion;
 
@@ -403,7 +530,7 @@ const TypingTestPage = () => {
         setLastSaved(new Date());
       }
     } catch (error) {
-      console.error("Save progress failed:", error);
+      console.error("Unable to save typing progress:", error);
 
       if (mountedRef.current) {
         setSaveError("Unable to save progress. Please retry.");
@@ -415,39 +542,38 @@ const TypingTestPage = () => {
         setSaving(false);
       }
     }
-  }, [attempt?._id, submitted]);
+  }, [attempt?._id, isTypingStarted, submitted]);
 
-  // ----------------------------------------------------------
-  // AUTOSAVE
-  // ----------------------------------------------------------
+  // Autosave every 10 seconds.
 
   useEffect(() => {
-    if (!examStarted || !attempt?._id || submitted) return;
+    if (!isTypingStarted || submitted || !attempt?._id) {
+      return;
+    }
 
     const interval = window.setInterval(() => {
       void saveProgress();
     }, 10000);
 
     return () => window.clearInterval(interval);
-  }, [examStarted, attempt?._id, saveProgress, submitted]);
+  }, [isTypingStarted, submitted, attempt?._id, saveProgress]);
 
   // ----------------------------------------------------------
-  // SUBMIT
+  // SUBMIT EXAM
   // ----------------------------------------------------------
 
   const handleSubmit = useCallback(async () => {
-    if (!attempt?._id || submitted || submittingRef.current) {
-      return;
-    }
-
-    if (savingRef.current) {
-      setSaveError("Saving is in progress. Please try again.");
+    if (
+      !attempt?._id ||
+      submitted ||
+      submittingRef.current ||
+      savingRef.current
+    ) {
       return;
     }
 
     submittingRef.current = true;
     setSubmitting(true);
-    setSubmitModalOpen(true);
     setSaveError("");
 
     try {
@@ -463,28 +589,25 @@ const TypingTestPage = () => {
         state: { result: response },
       });
     } catch (error) {
-      console.error("Submit failed:", error);
+      console.error("Unable to submit examination:", error);
 
       setSaveError(
         error instanceof Error
           ? error.message
-          : "Unable to submit examination. Please retry.",
+          : "Unable to submit examination. Please try again.",
       );
 
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [attempt?._id, navigate, submitted]);
+  }, [attempt?._id, submitted, navigate]);
 
   // ----------------------------------------------------------
-  // COUNTDOWN
+  // TIMER
   // ----------------------------------------------------------
 
   useEffect(() => {
-    if (!examStarted || !attempt?._id || submitted) return;
-
-    if (remainingSeconds <= 0) {
-      void handleSubmit();
+    if (!isTypingStarted || submitted || submitting || remainingSeconds <= 0) {
       return;
     }
 
@@ -493,810 +616,675 @@ const TypingTestPage = () => {
     }, 1000);
 
     return () => window.clearTimeout(timerId);
-  }, [examStarted, attempt?._id, remainingSeconds, submitted, handleSubmit]);
+  }, [isTypingStarted, submitted, submitting, remainingSeconds]);
+
+  useEffect(() => {
+    if (isTypingStarted && remainingSeconds <= 0 && !submitted && !submitting) {
+      void handleSubmit();
+    }
+  }, [isTypingStarted, remainingSeconds, submitted, submitting, handleSubmit]);
 
   // ----------------------------------------------------------
-  // TYPING EVENTS
-  // ----------------------------------------------------------
-
-  const handleTyping = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    if (!examStarted || remainingSeconds <= 0 || submitted || submitting) {
-      return;
-    }
-
-    const value = event.target.value;
-
-    if (value.length > targetText.length) return;
-
-    setTypedText(value);
-    latestText.current = value;
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      !settings.allowBackspace &&
-      (event.key === "Backspace" || event.key === "Delete")
-    ) {
-      event.preventDefault();
-    }
-
-    if (
-      (event.ctrlKey || event.metaKey) &&
-      event.key.toLowerCase() === "v" &&
-      !settings.allowPaste
-    ) {
-      event.preventDefault();
-    }
-  };
-
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!settings.allowPaste) {
-      event.preventDefault();
-    }
-  };
-
-  // ----------------------------------------------------------
-  // PASSAGE RENDERER
+  // PASSAGE RENDERING
   // ----------------------------------------------------------
 
   const renderPassage = () => {
-    if (!passage) return null;
+    const tokens = tokenizePassage(targetText);
+    let wordIndex = -1;
+    let characterIndex = 0;
 
-    return passage.content.split("").map((character, index) => {
-      const typedCharacter = typedText[index];
+    return tokens.map((token, tokenIndex) => {
+      const isWord = /\S/.test(token);
+      if (isWord) wordIndex += 1;
 
-      let color = "";
+      const state = isWord
+        ? wordEvaluation.referenceWordStates[wordIndex]
+        : undefined;
+      const className =
+        state === "correct"
+          ? dark
+            ? "text-emerald-400"
+            : "text-emerald-700"
+          : state === "incorrect"
+            ? settings.highlightErrors
+              ? dark
+                ? "bg-red-900/50 text-red-300"
+                : "bg-red-100 text-red-700"
+              : ""
+            : state === "omitted"
+              ? settings.highlightErrors
+                ? dark
+                  ? "bg-amber-900/40 text-amber-300"
+                  : "bg-amber-100 text-amber-800"
+                : ""
+              : "";
 
-      if (index < typedText.length) {
-        if (typedCharacter === character) {
-          color = dark
-            ? "bg-emerald-900/40 text-emerald-300"
-            : "bg-emerald-100 text-emerald-800";
-        } else if (settings.highlightErrors) {
-          color = dark
-            ? "bg-red-900/50 text-red-300"
-            : "bg-red-100 text-red-700";
-        }
-      }
-
-      if (index === typedText.length) {
-        color = dark
-          ? "rounded-sm bg-blue-900/60 text-blue-200 ring-1 ring-blue-400"
-          : "rounded-sm bg-blue-100 text-blue-800 ring-1 ring-blue-400";
-      }
+      const startIndex = characterIndex;
+      characterIndex += token.length;
 
       return (
         <span
-          key={index}
-          ref={(element) => {
-            characterRefs.current[index] = element;
-          }}
-          className={color}
+          key={tokenIndex}
+          data-character-index={startIndex}
+          className={className}
         >
-          {character}
+          {token}
         </span>
       );
     });
   };
 
   // ----------------------------------------------------------
-  // SESSION VALIDATION
+  // VALIDATION
   // ----------------------------------------------------------
 
   if (!examId || !passageId || !attempt || !passage) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-5">
-        <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-2xl text-red-600">
-            !
-          </div>
+      <main className="flex min-h-dvh items-center justify-center bg-[#F8FAFC] p-4">
+        <section className="w-full max-w-md rounded-xl border border-[#E4E7EC] bg-white p-7 text-center">
+          <FileText size={30} className="mx-auto text-[#155EEF]" />
 
-          <h1 className="text-xl font-bold text-slate-900">
-            Examination session not found
+          <h1 className="mt-4 text-lg font-semibold text-[#101828]">
+            Examination session unavailable
           </h1>
 
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            Your examination session may have expired or the page was refreshed.
-            Please start a new examination.
+          <p className="mt-2 text-sm text-[#667085]">
+            Please return to the examination and start a new attempt.
           </p>
 
           <Link
             to="/typing-exams"
-            className="mt-6 inline-flex rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[#155EEF] px-4 py-2.5 text-sm font-semibold text-white"
           >
+            <ArrowLeft size={16} />
             Back to examinations
           </Link>
-        </div>
-      </div>
+        </section>
+      </main>
     );
   }
 
-  // ----------------------------------------------------------
+  // ============================================================
   // MAIN UI
-  // ----------------------------------------------------------
+  // ============================================================
 
   return (
-    <div ref={containerRef} className={`min-h-screen ${ui.page}`}>
-      <div className="flex min-h-screen w-full min-w-0 flex-col p-2 sm:p-3 lg:p-4">
-        {/* ================================================ */}
-        {/* TOP HEADER */}
-        {/* ================================================ */}
+    <main
+      ref={containerRef}
+      className={`flex h-dvh w-full flex-col overflow-hidden ${ui.page}`}
+    >
+      {/* ======================================================
+          HEADER
+      ====================================================== */}
 
-        <header
-          className={`sticky top-0 z-30 mb-3 rounded-xl border shadow-sm ${ui.panel}`}
-        >
-          <div className="flex min-h-[58px] flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold text-white sm:flex">
-                T
-              </div>
+      <header
+        className={`z-40 shrink-0 border-b shadow-sm ${ui.panel} ${ui.border}`}
+      >
+        <div className="flex min-h-[64px] w-full flex-wrap items-center justify-between gap-x-5 gap-y-2 px-4 py-2">
+          {/* LEFT: EXAM TITLE */}
 
-              <div className="min-w-0">
-                <h1 className="truncate text-sm font-bold sm:text-base">
-                  {passage.title}
-                </h1>
+          <div className="flex min-w-[190px] flex-1 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              aria-label="Go back"
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                dark
+                  ? "text-slate-300 hover:bg-slate-800"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              <ArrowLeft size={19} />
+            </button>
 
-                <p className={`truncate text-[10px] sm:text-xs ${ui.muted}`}>
-                  {passage.language} <span className="px-1">·</span>
-                  {passageWordCount} words
-                  <span className="px-1">·</span>
-                  {settings.examPreset.toUpperCase()} interface
-                </p>
-              </div>
-            </div>
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-bold">{passage.title}</h1>
 
-            <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-              {/* TIMER */}
-
-              <div
-                className={`rounded-lg border px-3 py-1.5 text-center ${
-                  timeLow
-                    ? "border-red-200 bg-red-50 text-red-700"
-                    : dark
-                      ? "border-slate-700 bg-slate-800"
-                      : "border-slate-200 bg-slate-50"
-                }`}
-              >
-                <p className="text-[9px] font-semibold uppercase tracking-wider opacity-70">
-                  Time left
-                </p>
-
-                <p className="text-base font-bold tabular-nums sm:text-lg">
-                  {timer}
-                </p>
-              </div>
-
-              {/* SETTINGS */}
-
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setSettingsOpen((value) => !value)}
-                  aria-label="Open examination settings"
-                  aria-expanded={settingsOpen}
-                  title="Preferences"
-                  className={`flex h-9 w-9 items-center justify-center rounded-lg border transition hover:border-blue-400 hover:text-blue-600 ${ui.panel}`}
-                >
-                  <SettingsIcon />
-                </button>
-
-                {settingsOpen && (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Close settings"
-                      className="fixed inset-0 z-40 cursor-default"
-                      onClick={() => setSettingsOpen(false)}
-                    />
-
-                    <div
-                      className={`absolute right-0 top-11 z-50 max-h-[80vh] w-[min(340px,calc(100vw-24px))] overflow-y-auto rounded-2xl border p-4 shadow-2xl ${ui.panel}`}
-                    >
-                      <div className="mb-4 flex items-center justify-between">
-                        <div>
-                          <h3 className="text-sm font-bold">
-                            Exam preferences
-                          </h3>
-                          <p className={`text-[10px] ${ui.muted}`}>
-                            Personalize your workspace
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setSettingsOpen(false)}
-                          className={`rounded-lg p-2 ${ui.secondary}`}
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      <SettingSelect
-                        label="Exam interface"
-                        value={settings.examPreset}
-                        onChange={(value) => applyPreset(value as ExamPreset)}
-                        options={[
-                          ["tcs", "TCS iON Style"],
-                          ["ssc", "SSC Typing Style"],
-                          ["ibps", "IBPS / Banking Style"],
-                          ["custom", "Custom"],
-                        ]}
-                        dark={dark}
-                      />
-
-                      <SettingSelect
-                        label="Layout"
-                        value={settings.layout}
-                        onChange={(value) =>
-                          updateSetting("layout", value as LayoutMode)
-                        }
-                        options={[
-                          ["horizontal", "Horizontal"],
-                          ["vertical", "Vertical"],
-                        ]}
-                        dark={dark}
-                      />
-
-                      <SettingSelect
-                        label="Font family"
-                        value={settings.fontFamily}
-                        onChange={(value) =>
-                          updateSetting("fontFamily", value as FontFamily)
-                        }
-                        options={[
-                          ["arial", "Arial"],
-                          ["roboto", "Roboto"],
-                          ["inter", "Inter"],
-                          ["calibri", "Calibri"],
-                          ["times", "Times New Roman"],
-                          ["mono", "Courier New"],
-                        ]}
-                        dark={dark}
-                      />
-
-                      <SettingSelect
-                        label="Font size"
-                        value={settings.fontSize}
-                        onChange={(value) =>
-                          updateSetting("fontSize", value as FontSize)
-                        }
-                        options={[
-                          ["small", "Small"],
-                          ["medium", "Medium"],
-                          ["large", "Large"],
-                        ]}
-                        dark={dark}
-                      />
-
-                      <SettingSelect
-                        label="Appearance"
-                        value={settings.theme}
-                        onChange={(value) =>
-                          updateSetting("theme", value as ThemeMode)
-                        }
-                        options={[
-                          ["light", "Light"],
-                          ["dark", "Dark"],
-                        ]}
-                        dark={dark}
-                      />
-
-                      <div className={`my-4 border-t ${ui.border}`} />
-
-                      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                        Display and behaviour
-                      </p>
-
-                      <div className="space-y-1">
-                        <SettingToggle
-                          label="Show passage"
-                          checked={settings.showPassage}
-                          onChange={(value) =>
-                            updateSetting("showPassage", value)
-                          }
-                          dark={dark}
-                        />
-
-                        <SettingToggle
-                          label="Automatic passage scroll"
-                          checked={settings.autoScroll}
-                          onChange={(value) =>
-                            updateSetting("autoScroll", value)
-                          }
-                          dark={dark}
-                        />
-
-                        <SettingToggle
-                          label="Highlight typing errors"
-                          checked={settings.highlightErrors}
-                          onChange={(value) =>
-                            updateSetting("highlightErrors", value)
-                          }
-                          dark={dark}
-                        />
-
-                        <SettingToggle
-                          label="Show live statistics"
-                          checked={settings.showStatistics}
-                          onChange={(value) =>
-                            updateSetting("showStatistics", value)
-                          }
-                          dark={dark}
-                        />
-
-                        <SettingToggle
-                          label="Allow backspace"
-                          checked={settings.allowBackspace}
-                          onChange={(value) =>
-                            updateSetting("allowBackspace", value)
-                          }
-                          dark={dark}
-                        />
-
-                        <SettingToggle
-                          label="Allow paste"
-                          checked={settings.allowPaste}
-                          onChange={(value) =>
-                            updateSetting("allowPaste", value)
-                          }
-                          dark={dark}
-                        />
-
-                        <SettingToggle
-                          label="Automatic input focus"
-                          checked={settings.autoFocus}
-                          onChange={(value) =>
-                            updateSetting("autoFocus", value)
-                          }
-                          dark={dark}
-                        />
-                      </div>
-
-                      <div className={`my-4 border-t ${ui.border}`} />
-
-                      <button
-                        type="button"
-                        onClick={resetSettings}
-                        className={`w-full rounded-xl border px-3 py-2.5 text-xs font-semibold transition hover:border-blue-400 hover:text-blue-600 ${ui.panel}`}
-                      >
-                        Reset all preferences
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* FULLSCREEN */}
-
-              <button
-                type="button"
-                onClick={toggleFullscreen}
-                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                aria-label="Toggle fullscreen"
-                className={`flex h-9 w-9 items-center justify-center rounded-lg border transition hover:border-blue-400 hover:text-blue-600 ${ui.panel}`}
-              >
-                <FullscreenIcon />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {/* ================================================ */}
-        {/* STATISTICS */}
-        {/* ================================================ */}
-
-        {settings.showStatistics && (
-          <section className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <MetricCard
-              label="Typing speed"
-              value={grossWpm.toFixed(0)}
-              suffix="WPM"
-              color="blue"
-              dark={dark}
-            />
-
-            <MetricCard
-              label="Accuracy"
-              value={accuracy.toFixed(1)}
-              suffix="%"
-              color="green"
-              dark={dark}
-            />
-
-            <MetricCard
-              label="Correct characters"
-              value={correctCharacters.toString()}
-              color="purple"
-              dark={dark}
-            />
-
-            <MetricCard
-              label="Errors"
-              value={incorrectCharacters.toString()}
-              color="red"
-              dark={dark}
-            />
-          </section>
-        )}
-
-        {/* ================================================ */}
-        {/* PROGRESS */}
-        {/* ================================================ */}
-
-        <section className={`mb-3 rounded-xl border p-3 shadow-sm ${ui.panel}`}>
-          <div className="mb-2 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold">Examination progress</p>
-              <p className={`mt-0.5 text-[10px] ${ui.muted}`}>
-                {wordCount} words typed
+              <p className={`truncate text-[10px] ${ui.muted}`}>
+                {passage.language} · {passageWordCount} words
               </p>
             </div>
-
-            <span className="text-sm font-bold text-blue-600">
-              {progress.toFixed(1)}%
-            </span>
           </div>
 
-          <div
-            className={`h-2 overflow-hidden rounded-full ${
-              dark ? "bg-slate-800" : "bg-slate-100"
-            }`}
-          >
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
+          {/* CENTER: STATISTICS */}
+
+          {settings.showStatistics && (
+            <div className="flex shrink-0 items-center justify-center gap-4 border-l border-r border-[#E4E7EC] px-4 dark:border-slate-700">
+              <HeaderStat
+                label="Gross WPM"
+                value={grossWpm.toFixed(0)}
+                color="blue"
+                dark={dark}
+              />
+
+              <HeaderStat
+                label="Words"
+                value={typedWordCount}
+                color="blue"
+                dark={dark}
+              />
+
+              <HeaderStat
+                label="Accuracy"
+                value={`${accuracy.toFixed(1)}%`}
+                color="green"
+                dark={dark}
+              />
+
+              <HeaderStat
+                label="Errors"
+                value={totalWordErrors}
+                color="red"
+                dark={dark}
+              />
+
+              <HeaderStat
+                label="Progress"
+                value={`${progress.toFixed(0)}%`}
+                color="blue"
+                dark={dark}
+              />
+            </div>
+          )}
+
+          {/* RIGHT: SETTINGS AND CANDIDATE */}
+
+          <div className="flex shrink-0 items-center justify-end gap-4">
+            {/* SETTINGS TOOLBAR */}
+
+            <div className="flex shrink-0 items-center gap-2">
+              {/* FONT FAMILY */}
+              <div className="group relative">
+                <div
+                  className={`flex h-9 items-center gap-1.5 rounded-lg border px-2 ${ui.border}`}
+                >
+                  <Type size={16} className="text-[#155EEF]" />
+
+                  <select
+                    value={settings.fontFamily}
+                    onChange={(event) =>
+                      updateSetting(
+                        "fontFamily",
+                        event.target.value as FontFamily,
+                      )
+                    }
+                    aria-label="Font family"
+                    className={`w-[75px] border-0 bg-transparent text-xs outline-none ${ui.input}`}
+                  >
+                    <option value="arial">Arial</option>
+                    <option value="roboto">Roboto</option>
+                    <option value="inter">Inter</option>
+                    <option value="calibri">Calibri</option>
+                    <option value="times">Times New Roman</option>
+                    <option value="mono">Courier New</option>
+                  </select>
+                </div>
+                <SettingTooltip>Font family</SettingTooltip>
+              </div>
+
+              {/* FONT SIZE */}
+              <div className="flex h-9 items-center gap-1 rounded-lg border p-0.5 border-transparent">
+                <TooltipIcon
+                  label="Decrease font size"
+                  onClick={decreaseFont}
+                  disabled={settings.fontSize === "small"}
+                  dark={dark}
+                >
+                  <span className="text-xs font-bold">A−</span>
+                </TooltipIcon>
+
+                <TooltipIcon
+                  label="Increase font size"
+                  onClick={increaseFont}
+                  disabled={settings.fontSize === "large"}
+                  dark={dark}
+                >
+                  <span className="text-sm font-bold">A+</span>
+                </TooltipIcon>
+              </div>
+
+              {/* LAYOUT */}
+              <div className="flex h-9 items-center rounded-lg border p-0.5 border-transparent">
+                <TooltipIcon
+                  label="Horizontal layout"
+                  active={workspaceLayout === "horizontal"}
+                  onClick={() => setWorkspaceLayout("horizontal")}
+                  dark={dark}
+                >
+                  <Columns2 size={16} />
+                </TooltipIcon>
+
+                <TooltipIcon
+                  label="Vertical layout"
+                  active={workspaceLayout === "vertical"}
+                  onClick={() => setWorkspaceLayout("vertical")}
+                  dark={dark}
+                >
+                  <Rows2 size={16} />
+                </TooltipIcon>
+              </div>
+
+              {/* THEME */}
+              <TooltipIcon
+                label={dark ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={() => updateSetting("theme", dark ? "light" : "dark")}
+                dark={dark}
+              >
+                {dark ? <Sun size={17} /> : <Moon size={17} />}
+              </TooltipIcon>
+
+              {/* ERROR HIGHLIGHTING */}
+              <TooltipIcon
+                label={
+                  settings.highlightErrors
+                    ? "Disable error highlighting"
+                    : "Enable error highlighting"
+                }
+                active={settings.highlightErrors}
+                onClick={() =>
+                  updateSetting("highlightErrors", !settings.highlightErrors)
+                }
+                dark={dark}
+              >
+                <Highlighter size={17} />
+              </TooltipIcon>
+
+              {/* AUTO SCROLL */}
+              <TooltipIcon
+                label={
+                  settings.autoScroll
+                    ? "Turn auto-scroll off"
+                    : "Turn auto-scroll on"
+                }
+                active={settings.autoScroll}
+                onClick={() =>
+                  updateSetting("autoScroll", !settings.autoScroll)
+                }
+                dark={dark}
+              >
+                <ArrowDown size={17} />
+              </TooltipIcon>
+
+              {/* FULLSCREEN */}
+              <TooltipIcon
+                label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                onClick={() => void toggleFullscreen()}
+                dark={dark}
+              >
+                {isFullscreen ? <Minimize size={17} /> : <Maximize size={17} />}
+              </TooltipIcon>
+
+              {/* RESET */}
+              <TooltipIcon
+                label="Reset settings"
+                onClick={resetSettings}
+                dark={dark}
+              >
+                <RotateCcw size={16} />
+              </TooltipIcon>
+
+              {/* TIMER */}
+              <div
+                title="Examination time remaining"
+                className={`ml-1 flex h-10 items-center gap-2 rounded-lg px-3 ${
+                  remainingSeconds <= 60 && isTypingStarted
+                    ? "bg-red-50 text-red-600"
+                    : dark
+                      ? "bg-blue-500/15 text-blue-300"
+                      : "bg-blue-50 text-[#155EEF]"
+                }`}
+              >
+                <Clock3 size={17} />
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider opacity-70">
+                    {isTypingStarted ? "Time left" : "Ready"}
+                  </p>
+                  <p className="text-sm font-bold tabular-nums">{timer}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* CANDIDATE PROFILE */}
+
+            <div className="flex w-[165px] shrink-0 items-center gap-2 border-l border-[#E4E7EC] pl-4 dark:border-slate-700">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[#155EEF] dark:bg-blue-500/15 dark:text-blue-300">
+                <UserRound size={17} />
+              </div>
+
+              <div className="group relative min-w-0">
+                <p className="text-[9px] font-semibold uppercase tracking-wider text-[#667085] dark:text-slate-400">
+                  Candidate
+                </p>
+
+                <p className="max-w-[115px] truncate text-xs font-bold text-[#101828] dark:text-white">
+                  {candidateName}
+                </p>
+
+                <SettingTooltip>{candidateName}</SettingTooltip>
+              </div>
+            </div>
           </div>
-        </section>
+        </div>
+      </header>
 
-        {/* ================================================ */}
-        {/* PASSAGE + TYPING WORKSPACE */}
-        {/* ================================================ */}
+      {/* ======================================================
+          PROGRESS BAR
+      ====================================================== */}
 
-        <main
-          className={
-            settings.layout === "horizontal"
-              ? "grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2"
-              : "flex flex-1 flex-col gap-3"
-          }
+      <div
+        className={`h-1 w-full shrink-0 ${
+          dark ? "bg-slate-800" : "bg-slate-200"
+        }`}
+      >
+        <div
+          className="h-full bg-[#155EEF] transition-all duration-300"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      {/* ======================================================
+          WORKSPACE
+      ====================================================== */}
+
+      <div className="flex min-h-0 w-full flex-1 flex-col gap-2 overflow-hidden p-3">
+        {/* TIMER INSTRUCTION */}
+
+        {!isTypingStarted && (
+          <p className={`shrink-0 text-center text-xs ${ui.muted}`}>
+            Your timer starts automatically when you type the first character.
+          </p>
+        )}
+
+        {/* PASSAGE AND TYPING PANELS */}
+
+        <div
+          className={`grid min-h-0 flex-1 gap-3 overflow-hidden ${
+            workspaceLayout === "horizontal"
+              ? settings.showPassage
+                ? "grid-cols-1 lg:grid-cols-2"
+                : "grid-cols-1"
+              : settings.showPassage
+                ? "grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)]"
+                : "grid-cols-1"
+          }`}
         >
-          {/* PASSAGE PANEL */}
+          {/* REFERENCE PASSAGE */}
 
           {settings.showPassage && (
             <section
-              className={`flex min-h-[300px] min-w-0 flex-col overflow-hidden rounded-2xl border shadow-sm ${
-                ui.panel
-              } ${
-                settings.layout === "horizontal"
-                  ? "lg:min-h-[500px]"
-                  : "min-h-[300px]"
-              }`}
+              className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border ${ui.panel} ${ui.border}`}
             >
               <div
-                className={`flex items-center justify-between border-b px-4 py-3 ${ui.border}`}
+                className={`flex shrink-0 items-center justify-between border-b px-3 py-2 ${ui.border}`}
               >
                 <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-900/30">
-                    <DocumentIcon />
-                  </div>
+                  <FileText size={15} className="text-[#155EEF]" />
 
-                  <div>
-                    <h2 className="text-xs font-bold">Reading passage</h2>
-                    <p className={`text-[10px] ${ui.muted}`}>
-                      Type the passage shown below
-                    </p>
-                  </div>
+                  <h2 className="text-xs font-semibold">Reference passage</h2>
                 </div>
 
-                <span
-                  className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ${ui.secondary}`}
-                >
+                <span className={`text-[10px] ${ui.muted}`}>
                   {passageWordCount} words
                 </span>
               </div>
 
               <div
                 ref={passageRef}
-                className={`max-h-[65vh] min-h-[250px] flex-1 overflow-y-auto whitespace-pre-wrap break-words p-4 sm:p-5 ${FONT_SIZES[settings.fontSize]} ${
-                  dark ? "text-slate-300" : "text-slate-700"
+                className={`min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words p-4 leading-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+                  dark ? "text-slate-300" : "text-slate-800"
                 }`}
                 style={fontStyle}
               >
                 {renderPassage()}
               </div>
-
-              <div
-                className={`flex flex-wrap items-center gap-3 border-t px-4 py-2.5 ${ui.border}`}
-              >
-                <Legend color="bg-emerald-500" label="Correct" />
-                <Legend color="bg-red-500" label="Incorrect" />
-                <Legend color="bg-blue-500" label="Current position" />
-              </div>
             </section>
           )}
 
-          {/* TYPING PANEL */}
+          {/* TYPING AREA */}
 
           <section
-            className={`flex min-h-[300px] min-w-0 flex-col overflow-hidden rounded-2xl border shadow-sm ${
-              ui.panel
-            } ${
-              settings.layout === "horizontal"
-                ? "lg:min-h-[500px]"
-                : "min-h-[350px]"
-            }`}
+            className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border ${ui.panel} ${ui.border}`}
           >
             <div
-              className={`flex items-center justify-between border-b px-4 py-3 ${ui.border}`}
+              className={`flex shrink-0 items-center justify-between border-b px-3 py-2 ${ui.border}`}
             >
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30">
-                  <KeyboardIcon />
-                </div>
+                <Keyboard size={15} className="text-[#155EEF]" />
 
-                <div>
-                  <h2 className="text-xs font-bold">Typing workspace</h2>
-                  <p className={`text-[10px] ${ui.muted}`}>
-                    Type carefully and maintain your accuracy
-                  </p>
-                </div>
+                <h2 className="text-xs font-semibold">Typing area</h2>
               </div>
 
-              <span className={`text-[10px] font-medium ${ui.muted}`}>
-                {typedText.length}/{targetText.length}
+              <span className={`text-[10px] ${ui.muted}`}>
+                {typedWordCount} / {passageWordCount} words
               </span>
             </div>
 
-            <div className="flex flex-1 flex-col p-3 sm:p-4">
-              <textarea
-                ref={inputRef}
-                value={typedText}
-                onChange={handleTyping}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                disabled={
-                  !examStarted ||
-                  remainingSeconds <= 0 ||
-                  submitted ||
-                  submitting
-                }
-                placeholder={
-                  examStarted
-                    ? "Start typing the passage here..."
-                    : "Enter the examination to begin typing..."
-                }
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                autoComplete="off"
-                className={`min-h-[250px] w-full flex-1 resize-y rounded-xl border p-4 outline-none transition placeholder:text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 disabled:opacity-60 sm:min-h-[350px] ${ui.input} ${FONT_SIZES[settings.fontSize]}`}
-                style={fontStyle}
-              />
+            <textarea
+              ref={inputRef}
+              value={typedText}
+              onChange={handleTyping}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder="Start typing the passage here..."
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              disabled={submitted || submitting || remainingSeconds <= 0}
+              className={`min-h-0 w-full flex-1 resize-none overflow-y-auto border-0 p-4 leading-8 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+                ui.input
+              } ${
+                dark
+                  ? "placeholder:text-slate-500"
+                  : "placeholder:text-slate-400"
+              }`}
+              style={fontStyle}
+            />
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <div className={`flex flex-wrap gap-3 text-[10px] ${ui.muted}`}>
-                  <span>
-                    Backspace: {settings.allowBackspace ? "On" : "Off"}
-                  </span>
-                  <span>Paste: {settings.allowPaste ? "On" : "Off"}</span>
-                  <span>{settings.fontFamily.toUpperCase()}</span>
-                </div>
+            <div
+              className={`flex shrink-0 items-center justify-between border-t px-3 py-2 ${ui.border}`}
+            >
+              <span className={`text-[10px] ${ui.muted}`}>
+                {typedWordCount} words typed
+              </span>
 
-                <button
-                  type="button"
-                  disabled={!examStarted || submitting || submitted}
-                  onClick={() => inputRef.current?.focus()}
-                  className="rounded-lg bg-blue-50 px-3 py-1.5 text-[10px] font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50 dark:bg-blue-900/30 dark:text-blue-300"
-                >
-                  Focus typing area
-                </button>
-              </div>
+              <span className={`text-[10px] ${ui.muted}`}>
+                Backspace {settings.allowBackspace ? "On" : "Off"}
+              </span>
             </div>
           </section>
-        </main>
+        </div>
 
-        {/* ================================================ */}
-        {/* SUBMIT CONFIRMATION MODAL */}
-        {/* ================================================ */}
-
-        {submitModalOpen && (
-          <div
-            className="fixed inset-0 z-[150] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-3 backdrop-blur-sm sm:p-5"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="submit-confirmation-title"
-          >
-            <div
-              className={`my-auto w-full max-w-lg overflow-hidden rounded-2xl border shadow-2xl ${ui.panel}`}
-            >
-              <div className="bg-gradient-to-r from-blue-700 to-indigo-700 px-5 py-5 text-white sm:px-6">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-100">
-                      Final review
-                    </p>
-                    <h2
-                      id="submit-confirmation-title"
-                      className="mt-1 text-xl font-extrabold"
-                    >
-                      Submit examination?
-                    </h2>
-                    <p className="mt-1 text-xs leading-5 text-blue-100">
-                      Review your progress before submitting. You cannot edit
-                      your answers afterward.
-                    </p>
-                  </div>
-                  <span className="rounded-xl bg-white/15 px-3 py-2 text-xs font-bold tabular-nums">
-                    {timer} left
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-5 sm:p-6">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <SubmitSummaryCard
-                    label="Words typed"
-                    value={String(wordCount)}
-                    dark={dark}
-                  />
-                  <SubmitSummaryCard
-                    label="Characters typed"
-                    value={String(typedText.length)}
-                    dark={dark}
-                  />
-                  <SubmitSummaryCard
-                    label="Characters remaining"
-                    value={String(remainingCharacters)}
-                    dark={dark}
-                  />
-                  <SubmitSummaryCard
-                    label="Words remaining"
-                    value={String(remainingWords)}
-                    dark={dark}
-                  />
-                  <SubmitSummaryCard
-                    label="Accuracy"
-                    value={`${accuracy.toFixed(1)}%`}
-                    dark={dark}
-                  />
-                  <SubmitSummaryCard
-                    label="Typing errors"
-                    value={String(incorrectCharacters)}
-                    dark={dark}
-                  />
-                </div>
-
-                <div className={`mt-4 rounded-xl border p-3 ${ui.border}`}>
-                  <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-                    <span className={ui.muted}>Passage completion</span>
-                    <strong className="text-blue-600">
-                      {progress.toFixed(1)}%
-                    </strong>
-                  </div>
-                  <div
-                    className={`h-2 overflow-hidden rounded-full ${dark ? "bg-slate-800" : "bg-slate-100"}`}
-                  >
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-400"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-[10px]">
-                    <span className={ui.muted}>
-                      {typedText.length} of {targetText.length} characters
-                    </span>
-                    <span className={ui.muted}>
-                      {remainingSeconds <= 60
-                        ? "Time is running low"
-                        : "Time remaining"}
-                    </span>
-                  </div>
-                </div>
-
-                {saveError && (
-                  <p className="mt-3 rounded-lg bg-red-500/10 p-3 text-xs text-red-600">
-                    {saveError}
-                  </p>
-                )}
-
-                <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => setSubmitModalOpen(false)}
-                    className={`rounded-xl border px-4 py-3 text-xs font-bold transition hover:border-blue-400 disabled:opacity-50 ${ui.panel}`}
-                  >
-                    Continue typing
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submitting || saving || submitted}
-                    onClick={() => void handleSubmit()}
-                    className="rounded-xl bg-blue-600 px-5 py-3 text-xs font-extrabold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {submitting ? "Submitting..." : "Confirm submission"}
-                  </button>
-                </div>
-                {saving && (
-                  <p className={`mt-3 text-center text-[10px] ${ui.muted}`}>
-                    Progress is currently being saved. Wait for saving to finish
-                    before submitting.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ================================================ */}
-        {/* FOOTER ACTIONS */}
-        {/* ================================================ */}
+        {/* ====================================================
+            BOTTOM ACTION STRIP
+        ==================================================== */}
 
         <footer
-          className={`mt-3 rounded-xl border px-3 py-3 shadow-sm sm:px-4 ${ui.panel}`}
+          className={`flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${ui.panel} ${ui.border}`}
         >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              {saving ? (
-                <p className="flex items-center gap-2 text-xs font-medium text-blue-600">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-blue-600" />
-                  Saving your progress...
-                </p>
-              ) : saveError ? (
-                <p className="text-xs font-medium text-red-600">{saveError}</p>
-              ) : lastSaved ? (
-                <p className="text-xs font-medium text-emerald-600">
-                  ✓ Progress saved at {lastSaved.toLocaleTimeString()}
-                </p>
-              ) : (
-                <p className={`text-xs ${ui.muted}`}>
-                  Autosave enabled · Every 10 seconds
-                </p>
-              )}
+          <div className="flex min-w-0 items-center gap-2">
+            {saving ? (
+              <span className="text-xs text-blue-600">Saving progress...</span>
+            ) : saveError ? (
+              <span className="text-xs text-red-600">{saveError}</span>
+            ) : lastSaved ? (
+              <span className="flex items-center gap-1 text-xs text-emerald-600">
+                <Check size={13} />
+                Saved at {lastSaved.toLocaleTimeString()}
+              </span>
+            ) : (
+              <span className={`text-xs ${ui.muted}`}>
+                {isTypingStarted
+                  ? "Autosave enabled"
+                  : "Waiting for typing to begin"}
+              </span>
+            )}
+          </div>
 
-              {fullscreenError && (
-                <p className="mt-1 text-[10px] text-amber-600">
-                  {fullscreenError}
-                </p>
-              )}
-            </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!isTypingStarted || saving || submitting || submitted}
+              onClick={() => void saveProgress()}
+              className={`rounded-md border px-3 py-2 text-xs font-semibold ${ui.border} disabled:cursor-not-allowed disabled:opacity-40`}
+            >
+              Save
+            </button>
 
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-              <button
-                type="button"
-                disabled={!examStarted || saving || submitting || submitted}
-                onClick={() => void saveProgress()}
-                className={`rounded-xl border px-4 py-2.5 text-xs font-semibold transition hover:border-blue-400 disabled:opacity-50 ${ui.panel}`}
-              >
-                {saving ? "Saving..." : "Save progress"}
-              </button>
-
-              <button
-                type="button"
-                disabled={!examStarted || submitting || submitted}
-                onClick={() => setSubmitModalOpen(true)}
-                className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Submit examination
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={submitting || submitted}
+              onClick={() => setShowSubmitConfirmation(true)}
+              className="flex items-center gap-2 rounded-md bg-[#155EEF] px-4 py-2 text-xs font-semibold text-white hover:bg-[#004EEB] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send size={13} />
+              Submit examination
+            </button>
           </div>
         </footer>
-
-        <p className={`py-3 text-center text-[10px] ${ui.muted}`}>
-          Your progress is automatically saved. Do not close this examination
-          before submitting.
-        </p>
       </div>
-    </div>
+
+      {/* ======================================================
+          SUBMISSION CONFIRMATION
+      ====================================================== */}
+
+      {showSubmitConfirmation && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <section
+            className={`w-full max-w-md rounded-xl border p-5 shadow-xl ${ui.panel} ${ui.border}`}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold">Submit examination?</h2>
+
+              <button
+                type="button"
+                onClick={() => setShowSubmitConfirmation(false)}
+                className={`rounded-md p-1.5 ${ui.muted}`}
+                aria-label="Close confirmation"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className={`mt-2 text-sm leading-6 ${ui.muted}`}>
+              Are you sure you want to submit your examination? You cannot
+              continue typing after submission.
+            </p>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <SummaryItem
+                label="Words typed"
+                value={String(typedWordCount)}
+                dark={dark}
+              />
+
+              <SummaryItem
+                label="Accuracy"
+                value={`${accuracy.toFixed(1)}%`}
+                dark={dark}
+              />
+
+              <SummaryItem
+                label="Gross WPM"
+                value={grossWpm.toFixed(0)}
+                dark={dark}
+              />
+
+              <SummaryItem
+                label="Errors"
+                value={String(totalWordErrors)}
+                dark={dark}
+              />
+            </div>
+
+            {saveError && (
+              <p className="mt-3 text-xs text-red-600">{saveError}</p>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setShowSubmitConfirmation(false)}
+                className={`rounded-md border px-4 py-2 text-xs font-semibold ${ui.border}`}
+              >
+                Continue typing
+              </button>
+
+              <button
+                type="button"
+                disabled={submitting || saving || submitted}
+                onClick={() => void handleSubmit()}
+                className="rounded-md bg-[#155EEF] px-4 py-2 text-xs font-semibold text-white hover:bg-[#004EEB] disabled:opacity-50"
+              >
+                {submitting ? "Submitting..." : "Confirm submit"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </main>
   );
 };
 
 // ============================================================
-// REUSABLE COMPONENTS
+// TOOLTIP COMPONENTS
 // ============================================================
 
-const SubmitSummaryCard = ({
+function SettingTooltip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="pointer-events-none absolute left-1/2 top-full z-[100] mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#101828] px-2.5 py-1.5 text-[10px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+      {children}
+    </span>
+  );
+}
+
+function TooltipIcon({
+  children,
+  label,
+  onClick,
+  active = false,
+  disabled = false,
+  dark,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+  dark: boolean;
+}) {
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        title={label}
+        className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors duration-150 ${
+          disabled
+            ? "cursor-not-allowed opacity-35"
+            : active
+              ? "border-blue-200 bg-blue-50 text-[#155EEF] dark:border-blue-800 dark:bg-blue-500/15 dark:text-blue-300"
+              : dark
+                ? "border-slate-700 text-slate-300 hover:bg-slate-800"
+                : "border-[#E4E7EC] text-slate-600 hover:bg-slate-100"
+        }`}
+      >
+        {children}
+      </button>
+
+      <SettingTooltip>{label}</SettingTooltip>
+    </div>
+  );
+}
+
+// ============================================================
+// SUMMARY ITEM
+// ============================================================
+
+function SummaryItem({
   label,
   value,
   dark,
@@ -1304,208 +1292,62 @@ const SubmitSummaryCard = ({
   label: string;
   value: string;
   dark: boolean;
-}) => (
-  <div
-    className={`rounded-xl border p-3 ${dark ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50"}`}
-  >
-    <p
-      className={`text-[10px] font-medium ${dark ? "text-slate-400" : "text-slate-500"}`}
+}) {
+  return (
+    <div
+      className={`rounded-lg border p-3 ${
+        dark ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"
+      }`}
     >
-      {label}
-    </p>
-    <p className="mt-1 text-lg font-extrabold tabular-nums">{value}</p>
-  </div>
-);
+      <p
+        className={`text-[10px] ${dark ? "text-slate-400" : "text-slate-500"}`}
+      >
+        {label}
+      </p>
 
-const MetricCard = ({
+      <p className="mt-1 text-lg font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+// ============================================================
+// HEADER STAT
+// ============================================================
+
+function HeaderStat({
   label,
   value,
-  suffix,
   color,
   dark,
 }: {
   label: string;
-  value: string;
-  suffix?: string;
-  color: "blue" | "green" | "purple" | "red";
+  value: string | number;
+  color: "blue" | "green" | "red";
   dark: boolean;
-}) => {
+}) {
   const colors = {
-    blue: "bg-blue-500",
-    green: "bg-emerald-500",
-    purple: "bg-violet-500",
-    red: "bg-red-500",
+    blue: "text-[#155EEF]",
+    green: "text-emerald-600",
+    red: "text-red-600",
   };
 
   return (
-    <div
-      className={`relative overflow-hidden rounded-xl border p-3 shadow-sm sm:p-4 ${
-        dark ? "border-slate-800 bg-[#111a2b]" : "border-slate-200 bg-white"
-      }`}
-    >
-      <div className={`absolute inset-y-0 left-0 w-1 ${colors[color]}`} />
-
-      <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-        {label}
-      </p>
-
-      <div className="mt-1 flex items-baseline gap-1">
-        <span className="text-xl font-bold tabular-nums sm:text-2xl">
-          {value}
-        </span>
-
-        {suffix && (
-          <span className="text-[10px] font-semibold text-slate-500">
-            {suffix}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const SettingSelect = ({
-  label,
-  value,
-  onChange,
-  options,
-  dark,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: [string, string][];
-  dark: boolean;
-}) => {
-  return (
-    <label className="mb-3 block">
-      <span className="mb-1.5 block text-[11px] font-semibold text-slate-500">
-        {label}
+    <div className="flex min-w-[48px] shrink-0 flex-col items-center justify-center">
+      <span
+        className={`text-sm font-bold leading-tight tabular-nums sm:text-base ${colors[color]}`}
+      >
+        {value}
       </span>
 
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className={`w-full rounded-lg border px-3 py-2.5 text-xs outline-none focus:border-blue-500 ${
-          dark
-            ? "border-slate-700 bg-slate-900 text-white"
-            : "border-slate-200 bg-slate-50 text-slate-800"
+      <span
+        className={`mt-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-wide ${
+          dark ? "text-slate-400" : "text-[#667085]"
         }`}
       >
-        {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue} value={optionValue}>
-            {optionLabel}
-          </option>
-        ))}
-      </select>
-    </label>
+        {label}
+      </span>
+    </div>
   );
-};
-
-const SettingToggle = ({
-  label,
-  checked,
-  onChange,
-  dark,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  dark: boolean;
-}) => {
-  return (
-    <label
-      className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg px-2.5 py-2 transition ${
-        dark ? "hover:bg-slate-800" : "hover:bg-slate-50"
-      }`}
-    >
-      <span className="text-xs font-medium">{label}</span>
-
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 accent-blue-600"
-      />
-    </label>
-  );
-};
-
-const Legend = ({ color, label }: { color: string; label: string }) => (
-  <span className="flex items-center gap-1.5 text-[10px] text-slate-500">
-    <span className={`h-2 w-2 rounded-full ${color}`} />
-    {label}
-  </span>
-);
-
-// ============================================================
-// ICONS
-// ============================================================
-
-const SettingsIcon = () => (
-  <svg
-    width="17"
-    height="17"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="12" cy="12" r="3" />
-    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.7 2.94-.08-.02a1.7 1.7 0 0 0-1.78.5l-.06.07h-3.4l-.06-.08a1.7 1.7 0 0 0-1.78-.49l-.08.02-1.7-2.94.06-.06A1.7 1.7 0 0 0 9.6 15l-.1-.04v-3.4l.1-.04a1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.7-2.94.08.02a1.7 1.7 0 0 0 1.78-.5l.06-.07h3.4l.06.08a1.7 1.7 0 0 0 1.78.49l.08-.02 1.7 2.94-.06.06A1.7 1.7 0 0 0 19.6 11l.1.04v3.4z" />
-  </svg>
-);
-
-const FullscreenIcon = () => (
-  <svg
-    width="17"
-    height="17"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-    <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-    <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
-    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-  </svg>
-);
-
-const KeyboardIcon = () => (
-  <svg
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.7"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <rect x="2" y="5" width="20" height="14" rx="2" />
-    <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8" />
-  </svg>
-);
-
-const DocumentIcon = () => (
-  <svg
-    width="17"
-    height="17"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <path d="M14 2v6h6M8 13h8M8 17h8" />
-  </svg>
-);
+}
 
 export default TypingTestPage;

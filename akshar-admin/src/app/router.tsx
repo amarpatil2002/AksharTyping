@@ -8,7 +8,7 @@ import AdminLayout from "../layouts/AdminLayout";
 import PageNotFound from "../pages/PageNotFound";
 import DashboardPage from "../features/dashboard/DashboardPage";
 
-import { typingExamRoutes } from "../features/typing-exam/passage/passage.routes";
+import { typingExamRoutes } from "../features/typing-exam/typingExam.routes";
 
 import { TypingPassageProvider } from "../features/typing-exam/passage/context/TypingPassageProvider";
 import { TypingExamProvider } from "../features/typing-exam/exam/context/TypingExamContext";

@@ -8,6 +8,71 @@ import {
 
 import { examSchema, type ExamFormErrors } from "../schemas/exam.schema";
 
+// Extended scoring types mirror the TypingExam Mongoose scoring schema.
+type ErrorPenaltyKey =
+  | "spelling"
+  | "wrongWord"
+  | "omission"
+  | "extraWord"
+  | "capitalization"
+  | "notReached";
+
+type ExtendedScoring = Omit<CreateTypingExamPayload["scoring"], "method"> & {
+  method:
+    | TypingExamScoringMethod
+    | "fixed_error_penalty"
+    | "grouped_error_penalty"
+    | "correct_words_ratio"
+    | "qualifying_only"
+    | "speed_based";
+  policyVersion: number;
+  errorPenalties: Record<ErrorPenaltyKey, number>;
+  speedCalculation:
+    | "gross_words_per_minute"
+    | "correct_words_per_minute"
+    | "gross_minus_error_penalty";
+  accuracyCalculation:
+    | "correct_words_divided_by_words_typed"
+    | "correct_words_divided_by_reference_words";
+  notReachedPolicy:
+    | "no_separate_penalty"
+    | "count_as_error"
+    | "apply_configured_penalty";
+  rounding: "none" | "integer" | "two_decimals";
+  errorsPerGroup: number;
+  groupPenalty: number;
+  qualification: {
+    minimumMarks: number;
+    minimumWpm: number;
+    minimumAccuracy: number;
+    maximumErrors: number | null;
+    maximumErrorPercentage: number | null;
+    requireAll: boolean;
+  };
+};
+
+type ExtendedExamPayload = Omit<CreateTypingExamPayload, "scoring"> & {
+  scoring: ExtendedScoring;
+};
+
+const DEFAULT_ERROR_PENALTIES: Record<ErrorPenaltyKey, number> = {
+  spelling: 0,
+  wrongWord: 0,
+  omission: 0,
+  extraWord: 0,
+  capitalization: 0,
+  notReached: 0,
+};
+
+const DEFAULT_QUALIFICATION: ExtendedScoring["qualification"] = {
+  minimumMarks: 0,
+  minimumWpm: 0,
+  minimumAccuracy: 0,
+  maximumErrors: null,
+  maximumErrorPercentage: null,
+  requireAll: true,
+};
+
 interface ExamFormProps {
   initialValues?: CreateTypingExamPayload;
   onSubmit: (values: CreateTypingExamPayload) => Promise<void>;
@@ -15,41 +80,67 @@ interface ExamFormProps {
   submitting?: boolean;
 }
 
-const defaultValues: CreateTypingExamPayload = {
+const defaultValues: ExtendedExamPayload = {
   title: "",
   slug: "",
   description: "",
   language: "english",
+
   durationSeconds: 600,
   targetWpm: 30,
+
   maximumMarks: 100,
   passingPercentage: 40,
+
   scoring: {
     method: "standard",
+    policyVersion: 1,
     wordLength: 5,
     minimumWpm: 0,
     minimumAccuracy: 0,
     errorPenalty: 0,
+    errorPenalties: { ...DEFAULT_ERROR_PENALTIES },
     speedWeight: 50,
     accuracyWeight: 50,
+    speedCalculation: "correct_words_per_minute",
+    accuracyCalculation: "correct_words_divided_by_words_typed",
+    notReachedPolicy: "no_separate_penalty",
+    rounding: "two_decimals",
+    errorsPerGroup: 1,
+    groupPenalty: 0,
+    qualification: { ...DEFAULT_QUALIFICATION },
   },
+
   instructions: [],
   status: "draft",
 };
 
 const getFormValues = (
   initialValues?: CreateTypingExamPayload,
-): CreateTypingExamPayload => ({
-  ...defaultValues,
-  ...initialValues,
-  scoring: {
-    ...defaultValues.scoring,
-    ...(initialValues?.scoring ?? {}),
-  },
-  instructions: Array.isArray(initialValues?.instructions)
-    ? initialValues.instructions
-    : [],
-});
+): ExtendedExamPayload => {
+  const incoming = initialValues as ExtendedExamPayload | undefined;
+  return {
+    ...defaultValues,
+    ...initialValues,
+
+    scoring: {
+      ...defaultValues.scoring,
+      ...(incoming?.scoring ?? {}),
+      errorPenalties: {
+        ...DEFAULT_ERROR_PENALTIES,
+        ...(incoming?.scoring?.errorPenalties ?? {}),
+      },
+      qualification: {
+        ...DEFAULT_QUALIFICATION,
+        ...(incoming?.scoring?.qualification ?? {}),
+      },
+    },
+
+    instructions: Array.isArray(incoming?.instructions)
+      ? incoming.instructions
+      : [],
+  };
+};
 
 const inputClass =
   "w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 hover:border-gray-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 disabled:opacity-80";
@@ -59,17 +150,6 @@ const labelClass = "mb-1.5 block text-sm font-medium text-gray-700";
 const sectionClass =
   "rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6";
 
-// Accept only non-negative numeric values and decimals.
-const handleNumericChange = (
-  rawValue: string,
-  onValueChange: (value: number) => void,
-) => {
-  if (rawValue === "" || /^\d*\.?\d*$/.test(rawValue)) {
-    onValueChange(rawValue === "" || rawValue === "." ? 0 : Number(rawValue));
-  }
-};
-
-// Remove leading zeros when the input loses focus.
 const normalizeNumberOnBlur = (
   event: FocusEvent<HTMLInputElement>,
   onValueChange: (value: number) => void,
@@ -100,7 +180,7 @@ const ExamForm = ({
 }: ExamFormProps) => {
   const isEditing = Boolean(initialValues);
 
-  const [values, setValues] = useState<CreateTypingExamPayload>(() =>
+  const [values, setValues] = useState<ExtendedExamPayload>(() =>
     getFormValues(initialValues),
   );
 
@@ -110,6 +190,7 @@ const ExamForm = ({
 
   const [errors, setErrors] = useState<ExamFormErrors>({});
 
+  // Populate form when exam data is loaded.
   useEffect(() => {
     const safeValues = getFormValues(initialValues);
 
@@ -141,9 +222,9 @@ const ExamForm = ({
     }));
   };
 
-  const updateScoring = (
-    field: keyof CreateTypingExamPayload["scoring"],
-    value: number | TypingExamScoringMethod,
+  const updateScoring = <K extends keyof ExtendedScoring>(
+    field: K,
+    value: ExtendedScoring[K],
   ) => {
     setValues((previous) => ({
       ...previous,
@@ -161,12 +242,51 @@ const ExamForm = ({
     }));
   };
 
+  const updateErrorPenalty = (field: ErrorPenaltyKey, value: number) => {
+    setValues((previous) => ({
+      ...previous,
+      scoring: {
+        ...previous.scoring,
+        errorPenalties: {
+          ...previous.scoring.errorPenalties,
+          [field]: value,
+        },
+      },
+    }));
+    setErrors((previous) => ({
+      ...previous,
+      [`scoring.errorPenalties.${field}`]: "",
+    }));
+  };
+
+  const updateQualification = <
+    K extends keyof ExtendedScoring["qualification"],
+  >(
+    field: K,
+    value: ExtendedScoring["qualification"][K],
+  ) => {
+    setValues((previous) => ({
+      ...previous,
+      scoring: {
+        ...previous.scoring,
+        qualification: {
+          ...previous.scoring.qualification,
+          [field]: value,
+        },
+      },
+    }));
+    setErrors((previous) => ({
+      ...previous,
+      [`scoring.qualification.${field}`]: "",
+    }));
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (submitting) return;
 
-    const payload: CreateTypingExamPayload = {
+    const payload: ExtendedExamPayload = {
       ...values,
       title: values.title.trim(),
       slug: values.slug.trim(),
@@ -197,7 +317,7 @@ const ExamForm = ({
 
     setErrors({});
 
-    await onSubmit(result.data);
+    await onSubmit(result.data as CreateTypingExamPayload);
   };
 
   const passingMarks = Number(
@@ -205,7 +325,8 @@ const ExamForm = ({
   );
 
   const weightsTotal =
-    values.scoring.speedWeight + values.scoring.accuracyWeight;
+    Number(values.scoring.speedWeight ?? 0) +
+    Number(values.scoring.accuracyWeight ?? 0);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6" noValidate>
@@ -220,9 +341,9 @@ const ExamForm = ({
               viewBox="0 0 24 24"
             >
               <path
-                strokeWidth={1.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeWidth={1.8}
                 d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"
               />
             </svg>
@@ -241,6 +362,7 @@ const ExamForm = ({
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div>
             <label className={labelClass}>Exam Title *</label>
+
             <input
               maxLength={200}
               className={getFieldClass("title")}
@@ -248,6 +370,7 @@ const ExamForm = ({
               onChange={(event) => updateField("title", event.target.value)}
               placeholder="Enter exam title"
             />
+
             <FieldError message={errors.title} />
           </div>
 
@@ -269,6 +392,7 @@ const ExamForm = ({
               onChange={(event) => updateField("slug", event.target.value)}
               placeholder="typing-exam"
             />
+
             <FieldError message={errors.slug} />
             <p className="mt-1 text-xs text-gray-400">
               Use lowercase letters, numbers and hyphens.
@@ -297,17 +421,20 @@ const ExamForm = ({
               }
             >
               <option value="">Select language</option>
+
               {LANGUAGES.map((language) => (
                 <option key={language} value={language}>
                   {language.charAt(0).toUpperCase() + language.slice(1)}
                 </option>
               ))}
             </select>
+
             <FieldError message={errors.language} />
           </div>
 
           <div>
             <label className={labelClass}>Status</label>
+
             <select
               className={inputClass}
               value={values.status ?? "draft"}
@@ -326,6 +453,7 @@ const ExamForm = ({
 
           <div className="md:col-span-2">
             <label className={labelClass}>Description</label>
+
             <textarea
               rows={3}
               className={inputClass}
@@ -350,9 +478,9 @@ const ExamForm = ({
               viewBox="0 0 24 24"
             >
               <path
-                strokeWidth={1.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeWidth={1.8}
                 d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
@@ -380,16 +508,15 @@ const ExamForm = ({
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div>
             <label className={labelClass}>Duration (seconds) *</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="numeric"
+              type="number"
+              min={1}
               className={getFieldClass("durationSeconds")}
               value={values.durationSeconds}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateField("durationSeconds", value),
-                )
+                updateField("durationSeconds", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -397,6 +524,7 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors.durationSeconds} />
             <p className="mt-1 text-xs text-gray-400">
               Example: 600 seconds = 10 minutes.
@@ -405,16 +533,15 @@ const ExamForm = ({
 
           <div>
             <label className={labelClass}>Target WPM *</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="numeric"
+              type="number"
+              min={0}
               className={getFieldClass("targetWpm")}
               value={values.targetWpm}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateField("targetWpm", value),
-                )
+                updateField("targetWpm", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -422,21 +549,22 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors.targetWpm} />
           </div>
 
           <div>
             <label className={labelClass}>Maximum Marks *</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="numeric"
+              type="number"
+              min={1}
+              max={100000}
               className={getFieldClass("maximumMarks")}
               value={values.maximumMarks}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateField("maximumMarks", value),
-                )
+                updateField("maximumMarks", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -444,21 +572,22 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors.maximumMarks} />
           </div>
 
           <div>
             <label className={labelClass}>Passing Percentage (%) *</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="decimal"
+              type="number"
+              min={0}
+              max={100}
               className={getFieldClass("passingPercentage")}
               value={values.passingPercentage}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateField("passingPercentage", value),
-                )
+                updateField("passingPercentage", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -466,6 +595,7 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors.passingPercentage} />
           </div>
         </div>
@@ -503,9 +633,9 @@ const ExamForm = ({
               viewBox="0 0 24 24"
             >
               <path
-                strokeWidth={1.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeWidth={1.8}
                 d="M4 19V5m0 14h16M8 15v-4m4 4V7m4 8v-6m4 6V4"
               />
             </svg>
@@ -524,6 +654,7 @@ const ExamForm = ({
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div>
             <label className={labelClass}>Scoring Method *</label>
+
             <select
               disabled={isEditing}
               className={getFieldClass("scoring.method")}
@@ -540,22 +671,30 @@ const ExamForm = ({
               <option value="accuracy">Accuracy</option>
               <option value="weighted">Weighted</option>
               <option value="custom">Custom</option>
+              <option value="fixed_error_penalty">Fixed Error Penalty</option>
+              <option value="grouped_error_penalty">
+                Grouped Error Penalty
+              </option>
+              <option value="correct_words_ratio">Correct Words Ratio</option>
+              <option value="qualifying_only">Qualifying Only</option>
+              <option value="speed_based">Speed Based</option>
             </select>
+
             <FieldError message={errors["scoring.method"]} />
           </div>
 
           <div>
             <label className={labelClass}>Word Length</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="numeric"
+              type="number"
+              min={1}
+              max={20}
               className={getFieldClass("scoring.wordLength")}
               value={values.scoring.wordLength}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateScoring("wordLength", value),
-                )
+                updateScoring("wordLength", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -563,21 +702,22 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors["scoring.wordLength"]} />
           </div>
 
           <div>
             <label className={labelClass}>Minimum WPM</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="decimal"
+              type="number"
+              min={0}
+              max={500}
               className={getFieldClass("scoring.minimumWpm")}
               value={values.scoring.minimumWpm}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateScoring("minimumWpm", value),
-                )
+                updateScoring("minimumWpm", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -585,21 +725,22 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors["scoring.minimumWpm"]} />
           </div>
 
           <div>
             <label className={labelClass}>Minimum Accuracy (%)</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="decimal"
+              type="number"
+              min={0}
+              max={100}
               className={getFieldClass("scoring.minimumAccuracy")}
               value={values.scoring.minimumAccuracy}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateScoring("minimumAccuracy", value),
-                )
+                updateScoring("minimumAccuracy", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -607,21 +748,22 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors["scoring.minimumAccuracy"]} />
           </div>
 
           <div>
             <label className={labelClass}>Error Penalty</label>
+
             <input
               disabled={isEditing}
-              type="text"
-              inputMode="decimal"
+              type="number"
+              min={0}
+              max={100}
               className={getFieldClass("scoring.errorPenalty")}
               value={values.scoring.errorPenalty}
               onChange={(event) =>
-                handleNumericChange(event.target.value, (value) =>
-                  updateScoring("errorPenalty", value),
-                )
+                updateScoring("errorPenalty", Number(event.target.value))
               }
               onBlur={(event) =>
                 normalizeNumberOnBlur(event, (value) =>
@@ -629,11 +771,12 @@ const ExamForm = ({
                 )
               }
             />
+
             <FieldError message={errors["scoring.errorPenalty"]} />
           </div>
         </div>
 
-        {/* Weighted Scoring */}
+        {/* Weighted scoring */}
         {values.scoring.method === "weighted" && (
           <div className="mt-6 rounded-xl border border-violet-200 bg-violet-50/40 p-4 sm:p-5">
             <div className="mb-4">
@@ -649,16 +792,16 @@ const ExamForm = ({
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>Speed Weight (%)</label>
+
                 <input
                   disabled={isEditing}
-                  type="text"
-                  inputMode="decimal"
+                  type="number"
+                  min={0}
+                  max={100}
                   className={getFieldClass("scoring.speedWeight")}
                   value={values.scoring.speedWeight}
                   onChange={(event) =>
-                    handleNumericChange(event.target.value, (value) =>
-                      updateScoring("speedWeight", value),
-                    )
+                    updateScoring("speedWeight", Number(event.target.value))
                   }
                   onBlur={(event) =>
                     normalizeNumberOnBlur(event, (value) =>
@@ -666,21 +809,22 @@ const ExamForm = ({
                     )
                   }
                 />
+
                 <FieldError message={errors["scoring.speedWeight"]} />
               </div>
 
               <div>
                 <label className={labelClass}>Accuracy Weight (%)</label>
+
                 <input
                   disabled={isEditing}
-                  type="text"
-                  inputMode="decimal"
+                  type="number"
+                  min={0}
+                  max={100}
                   className={getFieldClass("scoring.accuracyWeight")}
                   value={values.scoring.accuracyWeight}
                   onChange={(event) =>
-                    handleNumericChange(event.target.value, (value) =>
-                      updateScoring("accuracyWeight", value),
-                    )
+                    updateScoring("accuracyWeight", Number(event.target.value))
                   }
                   onBlur={(event) =>
                     normalizeNumberOnBlur(event, (value) =>
@@ -688,6 +832,7 @@ const ExamForm = ({
                     )
                   }
                 />
+
                 <FieldError message={errors["scoring.accuracyWeight"]} />
               </div>
             </div>
@@ -709,6 +854,331 @@ const ExamForm = ({
             </div>
           </div>
         )}
+
+        {/* Calculation and evaluation policy */}
+        <div className="mt-6 space-y-5 border-t border-gray-100 pt-6">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">
+              Calculation Policy
+            </h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Choose how speed, accuracy, not-reached words, and rounding are
+              calculated.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <div>
+              <label className={labelClass}>Speed Calculation</label>
+              <select
+                disabled={isEditing}
+                className={inputClass}
+                value={values.scoring.speedCalculation}
+                onChange={(e) =>
+                  updateScoring(
+                    "speedCalculation",
+                    e.target.value as ExtendedScoring["speedCalculation"],
+                  )
+                }
+              >
+                <option value="gross_words_per_minute">
+                  Gross words per minute
+                </option>
+                <option value="correct_words_per_minute">
+                  Correct words per minute
+                </option>
+                <option value="gross_minus_error_penalty">
+                  Gross WPM minus error penalty
+                </option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Accuracy Calculation</label>
+              <select
+                disabled={isEditing}
+                className={inputClass}
+                value={values.scoring.accuracyCalculation}
+                onChange={(e) =>
+                  updateScoring(
+                    "accuracyCalculation",
+                    e.target.value as ExtendedScoring["accuracyCalculation"],
+                  )
+                }
+              >
+                <option value="correct_words_divided_by_words_typed">
+                  Correct words / words typed
+                </option>
+                <option value="correct_words_divided_by_reference_words">
+                  Correct words / reference words
+                </option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Not-Reached Word Policy</label>
+              <select
+                disabled={isEditing}
+                className={inputClass}
+                value={values.scoring.notReachedPolicy}
+                onChange={(e) =>
+                  updateScoring(
+                    "notReachedPolicy",
+                    e.target.value as ExtendedScoring["notReachedPolicy"],
+                  )
+                }
+              >
+                <option value="no_separate_penalty">No separate penalty</option>
+                <option value="count_as_error">Count as an error</option>
+                <option value="apply_configured_penalty">
+                  Apply configured penalty
+                </option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Marks Rounding</label>
+              <select
+                disabled={isEditing}
+                className={inputClass}
+                value={values.scoring.rounding}
+                onChange={(e) =>
+                  updateScoring(
+                    "rounding",
+                    e.target.value as ExtendedScoring["rounding"],
+                  )
+                }
+              >
+                <option value="none">No rounding</option>
+                <option value="integer">Nearest integer</option>
+                <option value="two_decimals">Two decimal places</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 p-4">
+            <h4 className="text-sm font-semibold text-gray-900">
+              Individual Error Penalties
+            </h4>
+            <p className="mt-1 text-xs text-gray-500">
+              Penalty applied for each error of the selected type, according to
+              the scoring method.
+            </p>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {(
+                [
+                  ["spelling", "Spelling"],
+                  ["wrongWord", "Wrong word"],
+                  ["omission", "Omission"],
+                  ["extraWord", "Extra word"],
+                  ["capitalization", "Capitalization"],
+                  ["notReached", "Not reached"],
+                ] as [ErrorPenaltyKey, string][]
+              ).map(([key, label]) => (
+                <div key={key}>
+                  <label className={labelClass}>{label}</label>
+                  <input
+                    disabled={isEditing}
+                    type="number"
+                    min={0}
+                    step="any"
+                    className={inputClass}
+                    value={values.scoring.errorPenalties[key]}
+                    onChange={(e) =>
+                      updateErrorPenalty(key, Number(e.target.value))
+                    }
+                    onBlur={(e) =>
+                      normalizeNumberOnBlur(e, (v) =>
+                        updateErrorPenalty(key, v),
+                      )
+                    }
+                  />
+                  <FieldError
+                    message={errors[`scoring.errorPenalties.${key}`]}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {values.scoring.method === "grouped_error_penalty" && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+              <h4 className="text-sm font-semibold text-violet-900">
+                Grouped Error Penalty
+              </h4>
+              <p className="mt-1 text-xs text-violet-700">
+                Apply a penalty for each configured group of errors.
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Errors per Group</label>
+                  <input
+                    disabled={isEditing}
+                    type="number"
+                    min={1}
+                    step={1}
+                    className={inputClass}
+                    value={values.scoring.errorsPerGroup}
+                    onChange={(e) =>
+                      updateScoring("errorsPerGroup", Number(e.target.value))
+                    }
+                  />
+                  <FieldError message={errors["scoring.errorsPerGroup"]} />
+                </div>
+                <div>
+                  <label className={labelClass}>Penalty per Group</label>
+                  <input
+                    disabled={isEditing}
+                    type="number"
+                    min={0}
+                    step="any"
+                    className={inputClass}
+                    value={values.scoring.groupPenalty}
+                    onChange={(e) =>
+                      updateScoring("groupPenalty", Number(e.target.value))
+                    }
+                  />
+                  <FieldError message={errors["scoring.groupPenalty"]} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-gray-200 p-4">
+            <div className="mb-4">
+              <h4 className="text-sm font-semibold text-gray-900">
+                Qualification Criteria
+              </h4>
+              <p className="mt-1 text-xs text-gray-500">
+                Configure the minimum requirements a candidate must satisfy.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label className={labelClass}>Minimum Marks</label>
+                <input
+                  disabled={isEditing}
+                  type="number"
+                  min={0}
+                  step="any"
+                  className={inputClass}
+                  value={values.scoring.qualification.minimumMarks}
+                  onChange={(e) =>
+                    updateQualification("minimumMarks", Number(e.target.value))
+                  }
+                />
+                <FieldError
+                  message={errors["scoring.qualification.minimumMarks"]}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Minimum WPM</label>
+                <input
+                  disabled={isEditing}
+                  type="number"
+                  min={0}
+                  step="any"
+                  className={inputClass}
+                  value={values.scoring.qualification.minimumWpm}
+                  onChange={(e) =>
+                    updateQualification("minimumWpm", Number(e.target.value))
+                  }
+                />
+                <FieldError
+                  message={errors["scoring.qualification.minimumWpm"]}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Minimum Accuracy (%)</label>
+                <input
+                  disabled={isEditing}
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="any"
+                  className={inputClass}
+                  value={values.scoring.qualification.minimumAccuracy}
+                  onChange={(e) =>
+                    updateQualification(
+                      "minimumAccuracy",
+                      Number(e.target.value),
+                    )
+                  }
+                />
+                <FieldError
+                  message={errors["scoring.qualification.minimumAccuracy"]}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Maximum Errors (optional)</label>
+                <input
+                  disabled={isEditing}
+                  type="number"
+                  min={0}
+                  step={1}
+                  className={inputClass}
+                  value={values.scoring.qualification.maximumErrors ?? ""}
+                  placeholder="No limit"
+                  onChange={(e) =>
+                    updateQualification(
+                      "maximumErrors",
+                      e.target.value === "" ? null : Number(e.target.value),
+                    )
+                  }
+                />
+                <FieldError
+                  message={errors["scoring.qualification.maximumErrors"]}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>
+                  Maximum Error Percentage (optional)
+                </label>
+                <input
+                  disabled={isEditing}
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="any"
+                  className={inputClass}
+                  value={
+                    values.scoring.qualification.maximumErrorPercentage ?? ""
+                  }
+                  placeholder="No limit"
+                  onChange={(e) =>
+                    updateQualification(
+                      "maximumErrorPercentage",
+                      e.target.value === "" ? null : Number(e.target.value),
+                    )
+                  }
+                />
+                <FieldError
+                  message={
+                    errors["scoring.qualification.maximumErrorPercentage"]
+                  }
+                />
+              </div>
+            </div>
+            <label className="mt-4 flex items-start gap-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+              <input
+                disabled={isEditing}
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600"
+                checked={values.scoring.qualification.requireAll}
+                onChange={(e) =>
+                  updateQualification("requireAll", e.target.checked)
+                }
+              />
+              <span>
+                <span className="font-medium">
+                  Require all qualification criteria
+                </span>
+                <span className="mt-0.5 block text-xs text-gray-500">
+                  When enabled, every configured qualification threshold must be
+                  met. When disabled, the evaluator may use any-one criteria
+                  behavior.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
       </section>
 
       {/* Instructions */}
@@ -722,9 +1192,9 @@ const ExamForm = ({
               viewBox="0 0 24 24"
             >
               <path
-                strokeWidth={1.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeWidth={1.8}
                 d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"
               />
             </svg>
@@ -741,6 +1211,7 @@ const ExamForm = ({
         </div>
 
         <label className={labelClass}>Instructions</label>
+
         <textarea
           rows={5}
           className={inputClass}

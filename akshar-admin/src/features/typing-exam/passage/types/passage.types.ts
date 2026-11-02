@@ -1,6 +1,9 @@
 import type { PaginationMeta } from "../../exam/types/typingExam.types";
 
-// Supported languages
+// ============================================================
+// SUPPORTED LANGUAGES
+// ============================================================
+
 export const LANGUAGES = [
   "english",
   "assamese",
@@ -29,89 +32,154 @@ export const LANGUAGES = [
 
 export type TypingPassageLanguage = (typeof LANGUAGES)[number];
 
-// Passage status
-export type TypingPassageStatus = "draft" | "published" | "archived";
+// ============================================================
+// PASSAGE STATUS
+// ============================================================
 
-// Passage difficulty
-export type TypingPassageDifficulty = "easy" | "medium" | "hard";
+export const PASSAGE_STATUSES = ["draft", "published", "archived"] as const;
 
-// Passage
+export type TypingPassageStatus = (typeof PASSAGE_STATUSES)[number];
+
+// ============================================================
+// PASSAGE DIFFICULTY
+// ============================================================
+
+export const PASSAGE_DIFFICULTIES = ["easy", "medium", "hard"] as const;
+
+export type TypingPassageDifficulty = (typeof PASSAGE_DIFFICULTIES)[number];
+
+// ============================================================
+// TYPING PASSAGE
+// ============================================================
+
 export interface TypingPassage {
   _id: string;
+
   examId: string;
+
   title: string;
+
   language: TypingPassageLanguage;
+
   content: string;
+
   wordCount: number;
+
   difficulty: TypingPassageDifficulty;
+
   status: TypingPassageStatus;
+
   createdBy: string;
+
   updatedBy?: string;
+
   createdAt: string;
+
   updatedAt: string;
 }
 
-// Create passage payload
+// ============================================================
+// CREATE PASSAGE PAYLOAD
+// ============================================================
+
 export interface CreateTypingPassagePayload {
   title: string;
+
   language: TypingPassageLanguage;
+
   content: string;
+
   difficulty: TypingPassageDifficulty;
+
   status?: TypingPassageStatus;
 }
 
-// Update passage payload
+// ============================================================
+// UPDATE PASSAGE PAYLOAD
+// ============================================================
+
 export type UpdateTypingPassagePayload = Partial<CreateTypingPassagePayload>;
 
-// Passage filters
+// ============================================================
+// PASSAGE FILTERS
+// ============================================================
+
 export interface TypingPassageFilters {
   page?: number;
+
   limit?: number;
+
   search?: string;
+
   difficulty?: TypingPassageDifficulty;
+
   status?: TypingPassageStatus;
+
   language?: TypingPassageLanguage;
 }
 
-// Passage list response
+// ============================================================
+// PASSAGE LIST RESPONSE
+// ============================================================
+
 export interface TypingPassageListResponse {
   passages: TypingPassage[];
+
   pagination: PaginationMeta;
 }
 
-// Single passage response
+// ============================================================
+// SINGLE PASSAGE RESPONSE
+// ============================================================
+
 export interface TypingPassageResponse {
   passage: TypingPassage;
 }
 
-// Create passage response
+// ============================================================
+// CREATE PASSAGE RESPONSE
+// ============================================================
+
 export interface CreateTypingPassageResponse {
   passage: TypingPassage;
 }
 
-// Update passage response
+// ============================================================
+// UPDATE PASSAGE RESPONSE
+// ============================================================
+
 export interface UpdateTypingPassageResponse {
   passage: TypingPassage;
 }
 
-// Delete passage response
+// ============================================================
+// DELETE PASSAGE RESPONSE
+// ============================================================
+
 export interface DeleteTypingPassageResponse {
   passageId: string;
+
   examId: string;
 }
 
-// Update passage status payload
+// ============================================================
+// UPDATE PASSAGE STATUS
+// ============================================================
+
 export interface UpdateTypingPassageStatusPayload {
   status: TypingPassageStatus;
 }
 
-// Passage route parameters
+// ============================================================
+// ROUTE PARAMETERS
+// ============================================================
+
 export interface TypingPassageParams {
   examId: string;
+
   passageId: string;
 }
 
-// Exam route parameters
 export interface TypingExamParams {
   examId: string;
 }

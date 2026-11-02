@@ -17,6 +17,7 @@ import type {
   TypingPassage,
   TypingPassageStatus,
 } from "../types/passage.types";
+import ExamDetailsCard from "../components/ExamDetailsCard";
 
 const formatDuration = (seconds: number) => {
   const minutes = Math.floor(seconds / 60);
@@ -252,7 +253,7 @@ const ExamPassagesPage = () => {
       </div>
 
       {/* Examination Details */}
-      <section className="rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:px-5">
+      {/* <section className="rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -320,7 +321,9 @@ const ExamPassagesPage = () => {
             </p>
           </div>
         </div>
-      </section>
+      </section> */}
+
+      <ExamDetailsCard exam={exam} passageCount={totalPassages} />
 
       {/* Statistics and Create Passage */}
 

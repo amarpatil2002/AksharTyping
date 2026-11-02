@@ -19,18 +19,37 @@ export interface PaginationParams {
 }
 
 // ==========================================
-// EXAM TYPES
+// SCORING TYPES
 // ==========================================
 
-export type TypingExamSort = "asc" | "desc";
+export type TypingScoringMethod =
+  | "standard"
+  | "net_wpm"
+  | "accuracy"
+  | "weighted"
+  | "custom";
 
 export interface TypingScoring {
-  method: "standard" | "net_wpm" | "accuracy" | "custom";
+  method: TypingScoringMethod;
   wordLength: number;
   minimumWpm: number;
   minimumAccuracy: number;
   errorPenalty: number;
+  speedWeight: number;
+  accuracyWeight: number;
 }
+
+export interface TypingMarksConfiguration {
+  maximumMarks: number;
+  passingPercentage: number;
+  passingMarks: number;
+}
+
+// ==========================================
+// EXAM TYPES
+// ==========================================
+
+export type TypingExamSort = "newest" | "oldest" | "title_asc" | "title_desc";
 
 export interface TypingExam {
   _id: MongoId;
@@ -40,8 +59,11 @@ export interface TypingExam {
   language: string;
   durationSeconds: number;
   targetWpm: number;
+  maximumMarks: number;
+  passingPercentage: number;
   scoring: TypingScoring;
   instructions: string[];
+  imageUrl?: string | null;
   createdAt: string;
 }
 
@@ -58,6 +80,7 @@ export interface TypingExamListResponse {
 
 export interface TypingExamDetailResponse {
   exam: TypingExam;
+  marksConfiguration: TypingMarksConfiguration;
   passageCount: number;
   isAvailable: boolean;
 }
@@ -71,7 +94,7 @@ export type TypingPassageDifficulty = "easy" | "medium" | "hard";
 export interface TypingPassage {
   _id: MongoId;
   title: string;
-  content: string;
+  content?: string;
   language: string;
   wordCount: number;
   difficulty: TypingPassageDifficulty;
@@ -84,12 +107,50 @@ export interface TypingPassageFilters extends PaginationParams {
 }
 
 export interface TypingPassageListResponse {
+  exam: Pick<
+    TypingExam,
+    "title" | "language" | "durationSeconds" | "targetWpm" | "scoring"
+  > &
+    Partial<Pick<TypingExam, "maximumMarks" | "passingPercentage">>;
+  marksConfiguration: TypingMarksConfiguration;
   passages: TypingPassage[];
   pagination: PaginationMeta;
 }
 
 // ==========================================
-// TYPING ATTEMPT TYPES
+// WORD-BASED TYPING METRICS
+// ==========================================
+
+/**
+ * All evaluated typing counts are word-based.
+ * Do not use character counts to calculate WPM, accuracy, or errors.
+ */
+export interface TypingWordMetrics {
+  totalWords: number;
+  wordsTyped: number;
+  correctWords: number;
+  incorrectWords: number;
+  misspellings: number;
+  omissions: number;
+  notReachedWords: number;
+  extraWords: number;
+  totalErrors: number;
+  grossWpm: number;
+  netWpm: number;
+  accuracy: number;
+}
+
+export type TypingMetrics = TypingWordMetrics;
+
+export interface TypingTimelineEntry extends TypingWordMetrics {
+  elapsedSeconds: number;
+  errorsInInterval: number;
+}
+
+export type TypingTimelinePoint = TypingTimelineEntry;
+
+// ==========================================
+// ATTEMPT TYPES
 // ==========================================
 
 export type TypingAttemptStatus =
@@ -104,6 +165,9 @@ export interface TypingAttemptConfig {
   language: string;
   durationSeconds: number;
   targetWpm: number;
+  maximumMarks: number;
+  passingPercentage: number;
+  passingMarks: number;
   scoring: TypingScoring;
 }
 
@@ -113,24 +177,6 @@ export interface TypingAttemptPassage {
   content: string;
   wordCount: number;
   difficulty: TypingPassageDifficulty;
-}
-
-export interface TypingMetrics {
-  totalCharacters: number;
-  correctCharacters: number;
-  incorrectCharacters: number;
-  missedCharacters: number;
-  extraCharacters: number;
-  totalErrors: number;
-  grossWpm: number;
-  netWpm: number;
-  accuracy: number;
-}
-
-export interface TypingTimelineEntry extends TypingMetrics {
-  elapsedSeconds: number;
-  typedCharacters: number;
-  errorsInInterval: number;
 }
 
 export interface TypingAttempt {
@@ -157,9 +203,16 @@ export interface TypingAttemptFilters extends PaginationParams {
   sort?: "newest" | "oldest";
 }
 
+export interface TypingAttemptHistoryExam {
+  _id: MongoId;
+  title: string;
+  slug: string;
+  language: string;
+}
+
 export interface TypingAttemptHistoryItem {
   _id: MongoId;
-  examId: TypingExam | MongoId;
+  examId: TypingAttemptHistoryExam | MongoId | null;
   passageId: MongoId;
   configSnapshot: {
     title: string;
@@ -183,8 +236,19 @@ export interface TypingAttemptListResponse {
 
 export interface StartTypingAttemptResponse {
   attempt: TypingAttempt;
+  exam: {
+    title: string;
+    language: string;
+    durationSeconds: number;
+    targetWpm: number;
+    maximumMarks: number;
+    passingPercentage: number;
+    passingMarks: number;
+    scoring: TypingScoring;
+  };
   passage: TypingAttemptPassage;
   remainingSeconds: number;
+  deletedExpiredAttempts: number;
 }
 
 // ==========================================
@@ -215,18 +279,14 @@ export interface SubmitTypingAttemptPayload {
   progressVersion: number;
 }
 
-export interface TypingAttemptResult {
-  totalCharacters: number;
-  correctCharacters: number;
-  incorrectCharacters: number;
-  missedCharacters: number;
-  extraCharacters: number;
-  totalErrors: number;
-  grossWpm: number;
-  netWpm: number;
-  accuracy: number;
+export interface TypingAttemptResult extends TypingWordMetrics {
   marks: number;
   maximumMarks: number;
+  passingPercentage: number;
+  passingMarks: number;
+  meetsMinimumWpm: boolean;
+  meetsMinimumAccuracy: boolean;
+  meetsPassingMarks: boolean;
   passed: boolean;
   evaluatedAt: string;
 }
@@ -237,11 +297,12 @@ export interface SubmitTypingAttemptResponse {
   submittedAt: string;
   progressVersion: number;
   elapsedSeconds: number;
+  remainingSeconds: number;
   result: TypingAttemptResult;
 }
 
 // ==========================================
-// RESULT ANALYTICS
+// RESULT SUMMARY / REQUIREMENTS
 // ==========================================
 
 export interface TypingResultSummary extends TypingAttemptResult {
@@ -252,97 +313,200 @@ export interface TypingResultRequirements {
   targetWpm: number;
   minimumWpm: number;
   minimumAccuracy: number;
+  maximumMarks: number;
+  passingPercentage: number;
+  passingMarks: number;
   achievedWpm: number;
   achievedAccuracy: number;
+  achievedMarks: number;
   wpmRequirementMet: boolean;
   accuracyRequirementMet: boolean;
+  passingMarksRequirementMet: boolean;
+  passed: boolean;
 }
 
-export interface TypingPerformanceTimelinePoint {
-  elapsedSeconds: number;
-  typedCharacters: number;
-  correctCharacters: number;
-  incorrectCharacters: number;
-  missedCharacters: number;
-  extraCharacters: number;
-  grossWpm: number;
-  netWpm: number;
-  accuracy: number;
-  errorsInInterval: number;
-}
+// ==========================================
+// PERFORMANCE TIMELINE / MINUTE PERFORMANCE
+// ==========================================
+
+export type TypingSpeedTrend = "initial" | "increased" | "decreased" | "stable";
 
 export interface TypingMinutePerformance {
   minute: number;
   label: string;
   durationSeconds: number;
-  charactersTyped: number;
-  correctCharacters: number;
+  wordsTyped: number;
+  correctWords: number;
   errors: number;
   grossWpm: number;
   netWpm: number;
   accuracy: number;
-  speedChange: number;
-  speedTrend: "initial" | "increased" | "decreased" | "stable";
+  speedChange?: number;
+  speedTrend?: TypingSpeedTrend;
 }
+
+// ==========================================
+// CHART BREAKDOWN / COMPARISONS
+// ==========================================
 
 export interface TypingBreakdownItem {
   label: string;
   value: number;
 }
 
-export interface TypingPerformanceInsights {
-  fastestMinute: TypingMinutePerformance | null;
-  slowestMinute: TypingMinutePerformance | null;
-  highestAccuracyMinute: TypingMinutePerformance | null;
-  lowestAccuracyMinute: TypingMinutePerformance | null;
-  mostErrorsMinute: TypingMinutePerformance | null;
-  biggestImprovement: TypingMinutePerformance | null;
-  biggestDecline: TypingMinutePerformance | null;
+export interface TypingSpeedComparison {
+  grossWpm: number;
+  netWpm: number;
+  targetWpm: number;
+  minimumWpm: number;
+}
+
+export interface TypingAccuracyComparison {
+  achievedAccuracy: number;
+  minimumAccuracy: number;
+}
+
+export interface TypingMarksComparison {
+  achievedMarks: number;
+  maximumMarks: number;
+  passingMarks: number;
+  passingPercentage: number;
+  percentage: number;
+}
+
+export interface TypingWordErrorPercentages {
+  incorrect: number;
+  notReached: number;
+  extra: number;
+}
+
+// ==========================================
+// ADVANCED WORD-BASED ANALYTICS
+// ==========================================
+
+export interface TypingAnalyticsOverview {
+  averageNetWpm: number;
+  averageGrossWpm: number;
+  peakNetWpm: number;
+  lowestNetWpm: number;
+  averageAccuracy: number;
+  speedConsistency: number;
+  speedDeviation: number;
+  speedChange: number;
+  accuracyChange: number;
+  errorRate: number;
+  correctWordRate: number;
+  wordsPerMinute: number;
+  estimatedWords: number;
+  improvementPercentage: number;
+  timelineSamples: number;
+}
+
+export interface TypingMinuteInsight {
+  minute: number | null;
+  elapsedMinute?: number | null;
+  netWpm: number;
+  grossWpm: number;
+  accuracy: number;
+}
+
+export interface TypingWordAnalytics {
+  totalWords: number;
+  wordsTyped: number;
+  correctWords: number;
+  incorrectWords: number;
+  notReachedWords: number;
+  extraWords: number;
+  totalErrors: number;
+  errorRate: number;
+  correctWordRate: number;
+}
+
+export interface TypingHalfComparison {
+  firstHalfAverageNetWpm: number;
+  secondHalfAverageNetWpm: number;
+  improvementPercentage: number;
+}
+
+export interface TypingAnalyticsInsight {
+  type: "positive" | "improvement" | "info";
+  title: string;
+  description: string;
+}
+
+export interface TypingAdvancedAnalytics {
+  overview: TypingAnalyticsOverview;
+  bestMinute: TypingMinuteInsight | null;
+  weakestMinute: TypingMinuteInsight | null;
+  wordMetrics: TypingWordAnalytics;
+  halfComparison: TypingHalfComparison;
+  insights: TypingAnalyticsInsight[];
+}
+
+// ==========================================
+// PERFORMANCE INSIGHTS
+// ==========================================
+
+export interface TypingPerformanceInsight {
+  type: "positive" | "improvement" | "info";
+  title: string;
+  description: string;
+}
+
+// ==========================================
+// RESULT RESPONSE
+// ==========================================
+
+export interface TypingResultExam {
+  _id?: MongoId;
+  title: string;
+  slug?: string;
+  language: string;
+}
+
+export interface TypingResultPassage {
+  _id?: MongoId;
+  title: string;
+  language: string;
+  wordCount: number;
+  difficulty: TypingPassageDifficulty;
+}
+
+export interface TypingResultScoringConfiguration extends TypingScoring {
+  targetWpm: number;
+  maximumMarks: number;
+  passingPercentage: number;
+  passingMarks: number;
 }
 
 export interface TypingResultResponse {
   attempt: {
     attemptId: MongoId;
-    status: "evaluated";
+    status: "evaluated" | "expired" | string;
     startedAt: string;
     submittedAt: string;
     deadlineAt: string;
     elapsedSeconds: number;
     durationSeconds: number;
   };
-
-  exam: {
-    _id: MongoId;
-    title: string;
-    slug: string;
-    language: string;
-  };
-
-  passage: {
-    _id: MongoId;
-    title: string;
-    language: string;
-    wordCount: number;
-    difficulty: TypingPassageDifficulty;
-  };
-
-  scoringConfiguration: TypingScoring & {
-    targetWpm: number;
-  };
-
+  exam: TypingResultExam;
+  passage: TypingResultPassage;
+  scoringConfiguration: TypingResultScoringConfiguration;
   summary: TypingResultSummary;
-
   requirements: TypingResultRequirements;
-
   charts: {
-    performanceTimeline: TypingPerformanceTimelinePoint[];
+    performanceTimeline: TypingTimelinePoint[];
     minutePerformance: TypingMinutePerformance[];
-    characterBreakdown: TypingBreakdownItem[];
-    errorBreakdown: TypingBreakdownItem[];
+    wordBreakdown: TypingBreakdownItem[];
+    wordErrorBreakdown: TypingBreakdownItem[];
+    speedComparison: TypingSpeedComparison;
+    accuracyComparison: TypingAccuracyComparison;
+    marksComparison?: TypingMarksComparison;
+    errorPercentages?: TypingWordErrorPercentages;
+    halfComparison?: TypingHalfComparison;
   };
-
-  performanceInsights: TypingPerformanceInsights;
-
+  analytics: TypingAdvancedAnalytics;
+  performanceInsights: TypingPerformanceInsight[];
   result: TypingAttemptResult;
 }
 
@@ -354,4 +518,10 @@ export interface ApiResponse<T> {
   success: boolean;
   message: string;
   data: T;
+}
+
+export interface TypingExamMarksConfiguration {
+  maximumMarks: number;
+  passingPercentage: number;
+  passingMarks: number;
 }

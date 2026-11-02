@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import type { TypingExam, TypingExamStatus } from "../types/typingExam.types";
 
 interface ExamTableProps {
@@ -26,6 +27,8 @@ const ExamTable = ({
       : `${minutes} min`;
   };
 
+  const navigate = useNavigate();
+
   const formatLabel = (value: string) =>
     value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 
@@ -50,6 +53,16 @@ const ExamTable = ({
         return "bg-orange-50 text-orange-700";
       case "custom":
         return "bg-pink-50 text-pink-700";
+      case "fixed_error_penalty":
+        return "bg-red-50 text-red-700";
+      case "grouped_error_penalty":
+        return "bg-amber-50 text-amber-700";
+      case "correct_words_ratio":
+        return "bg-cyan-50 text-cyan-700";
+      case "qualifying_only":
+        return "bg-indigo-50 text-indigo-700";
+      case "speed_based":
+        return "bg-emerald-50 text-emerald-700";
       default:
         return "bg-slate-100 text-slate-600";
     }
@@ -87,7 +100,6 @@ const ExamTable = ({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-      {/* Responsive table */}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1100px] text-left text-sm">
           <thead>
@@ -214,15 +226,148 @@ const ExamTable = ({
                   </div>
                 </td>
 
-                {/* Scoring method */}
+                {/* Scoring configuration */}
                 <td className="px-5 py-4">
-                  <span
-                    className={`inline-flex whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${getScoringStyle(
-                      exam.scoring.method,
-                    )}`}
-                  >
-                    {formatLabel(exam.scoring.method)}
-                  </span>
+                  <div className="flex flex-col items-start gap-2">
+                    <span
+                      className={`inline-flex whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold ${getScoringStyle(
+                        exam.scoring.method,
+                      )}`}
+                    >
+                      {formatLabel(exam.scoring.method)}
+                    </span>
+
+                    <details
+                      className="max-w-[240px] text-xs"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <summary
+                        className="cursor-pointer font-medium text-blue-600 hover:text-blue-800"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        Scoring details
+                      </summary>
+
+                      <div className="mt-2 min-w-[220px] space-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                        <div>
+                          <p className="font-semibold text-gray-700">
+                            Calculation
+                          </p>
+                          <p className="mt-1 text-gray-500">
+                            Speed:{" "}
+                            {exam.scoring.speedCalculation
+                              ? formatLabel(exam.scoring.speedCalculation)
+                              : "Not configured"}
+                          </p>
+                          <p className="text-gray-500">
+                            Accuracy:{" "}
+                            {exam.scoring.accuracyCalculation
+                              ? formatLabel(exam.scoring.accuracyCalculation)
+                              : "Not configured"}
+                          </p>
+                        </div>
+
+                        <div className="border-t border-gray-100 pt-2">
+                          <p className="font-semibold text-gray-700">
+                            Error configuration
+                          </p>
+                          <p className="mt-1 text-gray-500">
+                            General penalty: {exam.scoring.errorPenalty}
+                          </p>
+                          <p className="text-gray-500">
+                            Errors per group:{" "}
+                            {exam.scoring.errorsPerGroup ?? "Not configured"}
+                          </p>
+                          <p className="text-gray-500">
+                            Group penalty:{" "}
+                            {exam.scoring.groupPenalty ?? "Not configured"}
+                          </p>
+                        </div>
+
+                        {exam.scoring.errorPenalties && (
+                          <div className="border-t border-gray-100 pt-2">
+                            <p className="font-semibold text-gray-700">
+                              Individual error penalties
+                            </p>
+
+                            {Object.entries(exam.scoring.errorPenalties).map(
+                              ([key, value]) => (
+                                <p key={key} className="text-gray-500">
+                                  {formatLabel(key)}: {value}
+                                </p>
+                              ),
+                            )}
+                          </div>
+                        )}
+
+                        <div className="border-t border-gray-100 pt-2">
+                          <p className="font-semibold text-gray-700">
+                            Evaluation settings
+                          </p>
+                          <p className="mt-1 text-gray-500">
+                            Minimum WPM: {exam.scoring.minimumWpm}
+                          </p>
+                          <p className="text-gray-500">
+                            Minimum accuracy: {exam.scoring.minimumAccuracy}%
+                          </p>
+                          <p className="text-gray-500">
+                            Rounding:{" "}
+                            {exam.scoring.rounding
+                              ? formatLabel(exam.scoring.rounding)
+                              : "Not configured"}
+                          </p>
+                          <p className="text-gray-500">
+                            Not reached:{" "}
+                            {exam.scoring.notReachedPolicy
+                              ? formatLabel(exam.scoring.notReachedPolicy)
+                              : "Not configured"}
+                          </p>
+                          <p className="text-gray-500">
+                            Policy version:{" "}
+                            {exam.scoring.policyVersion ?? "Not configured"}
+                          </p>
+                        </div>
+
+                        {exam.scoring.qualification && (
+                          <div className="border-t border-gray-100 pt-2">
+                            <p className="font-semibold text-gray-700">
+                              Qualification
+                            </p>
+                            <p className="mt-1 text-gray-500">
+                              Minimum marks:{" "}
+                              {exam.scoring.qualification.minimumMarks ?? 0}
+                            </p>
+                            <p className="text-gray-500">
+                              Minimum WPM:{" "}
+                              {exam.scoring.qualification.minimumWpm ?? 0}
+                            </p>
+                            <p className="text-gray-500">
+                              Minimum accuracy:{" "}
+                              {exam.scoring.qualification.minimumAccuracy ?? 0}%
+                            </p>
+                            <p className="text-gray-500">
+                              Maximum errors:{" "}
+                              {exam.scoring.qualification.maximumErrors ??
+                                "No limit"}
+                            </p>
+                            <p className="text-gray-500">
+                              Maximum error percentage:{" "}
+                              {exam.scoring.qualification
+                                .maximumErrorPercentage ?? "No limit"}
+                              {exam.scoring.qualification
+                                .maximumErrorPercentage != null && "%"}
+                            </p>
+                            <p className="text-gray-500">
+                              Require all conditions:{" "}
+                              {exam.scoring.qualification.requireAll
+                                ? "Yes"
+                                : "No"}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  </div>
                 </td>
 
                 {/* Status */}
@@ -254,29 +399,39 @@ const ExamTable = ({
                     )}
                   </div>
                 </td>
+
                 {/* Actions */}
                 <td className="px-5 py-4">
-                  <div className="flex items-center justify-end gap-1.5">
+                  <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
-                      title="Edit examination"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        navigate(`/typing-exams/${exam._id}/details`);
+                      }}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+                    >
+                      View
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={(event) => {
                         event.stopPropagation();
                         onEdit(exam._id);
                       }}
-                      className="inline-flex h-8 items-center justify-center rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
                     >
                       Edit
                     </button>
 
                     <button
                       type="button"
-                      title="Delete examination"
                       onClick={(event) => {
                         event.stopPropagation();
                         onDelete(exam._id);
                       }}
-                      className="inline-flex h-8 items-center justify-center rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-100"
                     >
                       Delete
                     </button>

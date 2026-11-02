@@ -29,6 +29,9 @@ interface PassageFormErrors {
   content?: string;
 }
 
+const MAX_TITLE_LENGTH = 200;
+const MAX_CONTENT_LENGTH = 50000;
+
 const getFormValues = (
   values?: Partial<PassageFormValues>,
 ): PassageFormValues => ({
@@ -41,6 +44,14 @@ const getFormValues = (
 
 const formatLanguage = (language: string) =>
   language.charAt(0).toUpperCase() + language.slice(1);
+
+const countWords = (content: string): number => {
+  const trimmedContent = content.trim();
+
+  return trimmedContent
+    ? trimmedContent.split(/\s+/u).filter(Boolean).length
+    : 0;
+};
 
 const PassageForm = ({
   initialValues,
@@ -55,10 +66,17 @@ const PassageForm = ({
 
   const [errors, setErrors] = useState<PassageFormErrors>({});
 
+  // Reset form when the actual initial values change.
   useEffect(() => {
     setValues(getFormValues(initialValues));
     setErrors({});
-  }, [initialValues]);
+  }, [
+    initialValues?.title,
+    initialValues?.language,
+    initialValues?.content,
+    initialValues?.difficulty,
+    initialValues?.status,
+  ]);
 
   const handleChange = <K extends keyof PassageFormValues>(
     field: K,
@@ -69,27 +87,36 @@ const PassageForm = ({
       [field]: value,
     }));
 
-    setErrors((previous) => ({
-      ...previous,
-      [field]: undefined,
-    }));
+    if (field === "title" || field === "language" || field === "content") {
+      setErrors((previous) => ({
+        ...previous,
+        [field]: undefined,
+      }));
+    }
   };
 
   const validateForm = (): boolean => {
     const newErrors: PassageFormErrors = {};
 
-    if (!values.title.trim()) {
+    const trimmedTitle = values.title.trim();
+    const trimmedContent = values.content.trim();
+
+    if (!trimmedTitle) {
       newErrors.title = "Passage title is required.";
-    } else if (values.title.trim().length < 3) {
+    } else if (trimmedTitle.length < 3) {
       newErrors.title = "Title must contain at least 3 characters.";
+    } else if (trimmedTitle.length > MAX_TITLE_LENGTH) {
+      newErrors.title = `Title cannot exceed ${MAX_TITLE_LENGTH} characters.`;
     }
 
-    if (!values.language) {
-      newErrors.language = "Language is required.";
+    if (!values.language || !LANGUAGES.includes(values.language)) {
+      newErrors.language = "Please select a valid language.";
     }
 
-    if (!values.content.trim()) {
+    if (!trimmedContent) {
       newErrors.content = "Passage content is required.";
+    } else if (trimmedContent.length > MAX_CONTENT_LENGTH) {
+      newErrors.content = `Passage content cannot exceed ${MAX_CONTENT_LENGTH.toLocaleString()} characters.`;
     }
 
     setErrors(newErrors);
@@ -100,7 +127,7 @@ const PassageForm = ({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!validateForm()) return;
+    if (submitting || !validateForm()) return;
 
     await onSubmit({
       ...values,
@@ -109,12 +136,11 @@ const PassageForm = ({
     });
   };
 
-  const wordCount = values.content.trim()
-    ? values.content.trim().split(/\s+/).length
-    : 0;
+  const wordCount = countWords(values.content);
+  const contentLength = values.content.length;
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {/* Passage Title */}
       <div>
         <label
@@ -126,17 +152,34 @@ const PassageForm = ({
 
         <input
           id="title"
+          name="title"
           type="text"
           value={values.title}
           onChange={(event) => handleChange("title", event.target.value)}
           placeholder="Enter passage title"
+          maxLength={MAX_TITLE_LENGTH}
           disabled={submitting}
-          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
+          required
+          aria-invalid={Boolean(errors.title)}
+          aria-describedby={errors.title ? "title-error" : "title-hint"}
+          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-gray-100"
         />
 
-        {errors.title && (
-          <p className="mt-1 text-sm text-red-600">{errors.title}</p>
-        )}
+        <div className="mt-1 flex items-center justify-between">
+          {errors.title ? (
+            <p id="title-error" role="alert" className="text-sm text-red-600">
+              {errors.title}
+            </p>
+          ) : (
+            <p id="title-hint" className="text-xs text-gray-500">
+              Enter a descriptive passage title.
+            </p>
+          )}
+
+          <span className="text-xs text-gray-400">
+            {values.title.length}/{MAX_TITLE_LENGTH}
+          </span>
+        </div>
       </div>
 
       {/* Language */}
@@ -150,6 +193,7 @@ const PassageForm = ({
 
         <select
           id="language"
+          name="language"
           value={values.language}
           disabled={isEdit || submitting}
           onChange={(event) =>
@@ -158,7 +202,10 @@ const PassageForm = ({
               event.target.value as TypingPassageLanguage,
             )
           }
-          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+          required
+          aria-invalid={Boolean(errors.language)}
+          aria-describedby={errors.language ? "language-error" : undefined}
+          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
         >
           {LANGUAGES.map((language) => (
             <option key={language} value={language}>
@@ -174,7 +221,13 @@ const PassageForm = ({
         )}
 
         {errors.language && (
-          <p className="mt-1 text-sm text-red-600">{errors.language}</p>
+          <p
+            id="language-error"
+            role="alert"
+            className="mt-1 text-sm text-red-600"
+          >
+            {errors.language}
+          </p>
         )}
       </div>
 
@@ -188,22 +241,42 @@ const PassageForm = ({
             Passage Content <span className="text-red-500">*</span>
           </label>
 
-          <span className="text-xs text-gray-500">{wordCount} words</span>
+          <span className="text-xs font-medium text-gray-500">
+            {wordCount.toLocaleString()} words
+          </span>
         </div>
 
         <textarea
           id="content"
+          name="content"
           rows={10}
           value={values.content}
           disabled={submitting}
           onChange={(event) => handleChange("content", event.target.value)}
           placeholder="Enter the typing passage content..."
-          className="w-full resize-y rounded-lg border border-gray-300 px-4 py-3 text-sm leading-6 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
+          maxLength={MAX_CONTENT_LENGTH}
+          required
+          aria-invalid={Boolean(errors.content)}
+          aria-describedby={errors.content ? "content-error" : "content-hint"}
+          className="w-full resize-y rounded-lg border border-gray-300 px-4 py-3 text-sm leading-6 outline-none transition disabled:cursor-not-allowed disabled:bg-gray-100"
         />
 
-        {errors.content && (
-          <p className="mt-1 text-sm text-red-600">{errors.content}</p>
-        )}
+        <div className="mt-1 flex items-start justify-between gap-3">
+          {errors.content ? (
+            <p id="content-error" role="alert" className="text-sm text-red-600">
+              {errors.content}
+            </p>
+          ) : (
+            <p id="content-hint" className="text-xs text-gray-500">
+              Enter the complete passage candidates will type during the exam.
+            </p>
+          )}
+
+          <span className="shrink-0 text-xs text-gray-400">
+            {contentLength.toLocaleString()}/
+            {MAX_CONTENT_LENGTH.toLocaleString()}
+          </span>
+        </div>
       </div>
 
       {/* Difficulty and Status */}
@@ -218,6 +291,7 @@ const PassageForm = ({
 
           <select
             id="difficulty"
+            name="difficulty"
             value={values.difficulty}
             disabled={submitting}
             onChange={(event) =>
@@ -226,7 +300,7 @@ const PassageForm = ({
                 event.target.value as TypingPassageDifficulty,
               )
             }
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-gray-100"
           >
             <option value="easy">Easy</option>
             <option value="medium">Medium</option>
@@ -244,12 +318,13 @@ const PassageForm = ({
 
           <select
             id="status"
+            name="status"
             value={values.status}
             disabled={submitting}
             onChange={(event) =>
               handleChange("status", event.target.value as TypingPassageStatus)
             }
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-gray-100"
           >
             <option value="draft">Draft</option>
             <option value="published">Published</option>

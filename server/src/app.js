@@ -4,7 +4,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
-import adminTypingExamRoutes from "./modules/exams/typing-exam/adminTypingExam.routes.js";
+import adminTypingExamRoutes from "./modules/exams/typing-exam/admin/adminTypingExam.routes.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
 import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";

@@ -8,6 +8,7 @@ const typingPassageSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "TypingExam",
       required: true,
+      immutable: true,
     },
 
     title: {
@@ -28,9 +29,10 @@ const typingPassageSchema = new Schema(
       type: String,
       required: true,
       trim: true,
+      maxlength: 50000,
       validate: {
         validator(value) {
-          return value.length > 0;
+          return typeof value === "string" && value.trim().length > 0;
         },
         message: "Passage content cannot be empty.",
       },
@@ -58,6 +60,7 @@ const typingPassageSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      immutable: true,
     },
 
     updatedBy: {
@@ -68,17 +71,25 @@ const typingPassageSchema = new Schema(
   {
     timestamps: true,
     versionKey: false,
+    strict: true,
   },
 );
 
-// Automatically calculate whitespace-separated word count.
+// ============================================================
+// AUTOMATIC WORD COUNT
+// ============================================================
+
 typingPassageSchema.pre("validate", function () {
-  this.wordCount = this.content
-    ? this.content.trim().split(/\s+/u).filter(Boolean).length
-    : 0;
+  const content = this.content?.trim() ?? "";
+
+  this.wordCount = content ? content.split(/\s+/u).filter(Boolean).length : 0;
 });
 
-// Efficient passage selection for an exam.
+// ============================================================
+// INDEXES
+// ============================================================
+
+// Efficient candidate passage selection.
 typingPassageSchema.index({
   examId: 1,
   language: 1,

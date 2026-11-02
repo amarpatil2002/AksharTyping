@@ -1,4 +1,10 @@
 export function validateRequest(schema, target = "body") {
+  const allowedTargets = ["body", "params", "query"];
+
+  if (!allowedTargets.includes(target)) {
+    throw new Error(`Invalid validation target: ${target}`);
+  }
+
   return (req, res, next) => {
     const result = schema.safeParse(req[target]);
 

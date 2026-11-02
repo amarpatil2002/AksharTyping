@@ -18,15 +18,18 @@ const CreatePassagePage = () => {
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (values: PassageFormValues) => {
-    if (!examId) {
-      showToast("Exam ID is missing.", "error");
-      return;
-    }
+    if (!examId || submitting) return;
 
     try {
       setSubmitting(true);
 
-      await createPassage(examId, values);
+      await createPassage(examId, {
+        title: values.title.trim(),
+        language: values.language,
+        content: values.content.trim(),
+        difficulty: values.difficulty,
+        status: values.status,
+      });
 
       showToast("Passage created successfully.", "success");
 
@@ -40,7 +43,7 @@ const CreatePassagePage = () => {
 
   if (!examId) {
     return (
-      <div className="rounded-xl bg-white p-8 text-center shadow-sm">
+      <div className="rounded-xl border border-gray-200 bg-white p-8 text-center shadow-sm">
         <h2 className="font-semibold text-gray-900">Invalid examination URL</h2>
 
         <p className="mt-1 text-sm text-gray-500">Examination ID is missing.</p>
@@ -48,7 +51,7 @@ const CreatePassagePage = () => {
         <button
           type="button"
           onClick={() => navigate("/typing-exams")}
-          className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-800"
+          className="mt-4 text-sm font-medium text-blue-600 transition hover:text-blue-800"
         >
           Back to Examinations
         </button>
@@ -57,7 +60,7 @@ const CreatePassagePage = () => {
   }
 
   return (
-    <div className="space-y-4 pb-6">
+    <div className="space-y-5 pb-6">
       {/* Back Navigation */}
       <button
         type="button"

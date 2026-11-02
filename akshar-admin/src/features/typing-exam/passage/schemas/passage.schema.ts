@@ -6,9 +6,9 @@ import {
   type TypingPassageDifficulty,
 } from "../types/passage.types";
 
-// --------------------------------------------------
-// Enums
-// --------------------------------------------------
+// ============================================================
+// ENUM SCHEMAS
+// ============================================================
 
 export const passageLanguageSchema = z.enum(LANGUAGES, {
   message: "Please select a valid Indian language.",
@@ -18,25 +18,33 @@ export const passageStatusSchema = z.enum(["draft", "published", "archived"]);
 
 export const passageDifficultySchema = z.enum(["easy", "medium", "hard"]);
 
-// --------------------------------------------------
-// Create Passage Schema
-// --------------------------------------------------
+// ============================================================
+// COMMON FIELD SCHEMAS
+// ============================================================
+
+const passageTitleSchema = z
+  .string()
+  .trim()
+  .min(3, "Passage title must contain at least 3 characters.")
+  .max(200, "Passage title cannot exceed 200 characters.");
+
+const passageContentSchema = z
+  .string()
+  .trim()
+  .min(1, "Passage content is required.")
+  .max(50000, "Passage content cannot exceed 50,000 characters.");
+
+// ============================================================
+// CREATE PASSAGE SCHEMA
+// ============================================================
 
 export const createPassageSchema = z
   .object({
-    title: z
-      .string()
-      .trim()
-      .min(3, "Passage title must contain at least 3 characters.")
-      .max(200, "Passage title cannot exceed 200 characters."),
+    title: passageTitleSchema,
 
     language: passageLanguageSchema,
 
-    content: z
-      .string()
-      .trim()
-      .min(1, "Passage content is required.")
-      .max(50000, "Passage content cannot exceed 50,000 characters."),
+    content: passageContentSchema,
 
     difficulty: passageDifficultySchema,
 
@@ -44,27 +52,17 @@ export const createPassageSchema = z
   })
   .strict();
 
-// --------------------------------------------------
-// Update Passage Schema
-// --------------------------------------------------
+// ============================================================
+// UPDATE PASSAGE SCHEMA
+// ============================================================
 
 export const updatePassageSchema = z
   .object({
-    title: z
-      .string()
-      .trim()
-      .min(3, "Passage title must contain at least 3 characters.")
-      .max(200, "Passage title cannot exceed 200 characters.")
-      .optional(),
+    title: passageTitleSchema.optional(),
 
     language: passageLanguageSchema.optional(),
 
-    content: z
-      .string()
-      .trim()
-      .min(1, "Passage content is required.")
-      .max(50000, "Passage content cannot exceed 50,000 characters.")
-      .optional(),
+    content: passageContentSchema.optional(),
 
     difficulty: passageDifficultySchema.optional(),
 
@@ -75,31 +73,31 @@ export const updatePassageSchema = z
     message: "At least one field must be provided for updating.",
   });
 
-// --------------------------------------------------
-// Exam Parameters
-// --------------------------------------------------
+// ============================================================
+// EXAM PARAMS
+// ============================================================
 
 export const examParamsSchema = z
   .object({
-    examId: z.string().trim().min(1, "Exam ID is required."),
+    examId: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid examination ID."),
   })
   .strict();
 
-// --------------------------------------------------
-// Passage Parameters
-// --------------------------------------------------
+// ============================================================
+// PASSAGE PARAMS
+// ============================================================
 
 export const passageParamsSchema = z
   .object({
-    examId: z.string().trim().min(1, "Exam ID is required."),
+    examId: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid examination ID."),
 
-    passageId: z.string().trim().min(1, "Passage ID is required."),
+    passageId: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid passage ID."),
   })
   .strict();
 
-// --------------------------------------------------
-// Passage Query / Filters
-// --------------------------------------------------
+// ============================================================
+// PASSAGE QUERY SCHEMA
+// ============================================================
 
 export const passageQuerySchema = z
   .object({
@@ -126,9 +124,9 @@ export const passageQuerySchema = z
   })
   .strict();
 
-// --------------------------------------------------
-// Inferred Types
-// --------------------------------------------------
+// ============================================================
+// INFERRED TYPES
+// ============================================================
 
 export type CreatePassageFormValues = z.infer<typeof createPassageSchema>;
 
@@ -136,8 +134,8 @@ export type UpdatePassageFormValues = z.infer<typeof updatePassageSchema>;
 
 export type PassageQueryValues = z.infer<typeof passageQuerySchema>;
 
-// --------------------------------------------------
-// Enum Type Exports
-// --------------------------------------------------
+// ============================================================
+// ENUM TYPE EXPORTS
+// ============================================================
 
 export type { TypingPassageStatus, TypingPassageDifficulty };

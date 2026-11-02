@@ -15,10 +15,11 @@ import type {
 } from "../types/typingExam.types";
 
 const EditExamPage = () => {
-  const { examId } = useParams();
+  const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
 
-  const { getExamById, updateExam } = useTypingExam();
+  const { getExamById, updateExam, updateExamStatus } = useTypingExam();
+
   const { showToast } = useToast();
 
   const [initialValues, setInitialValues] =
@@ -26,6 +27,10 @@ const EditExamPage = () => {
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  // ==========================================================
+  // FETCH EXAMINATION
+  // ==========================================================
 
   useEffect(() => {
     if (!examId) {
@@ -53,12 +58,21 @@ const EditExamPage = () => {
           targetWpm: exam.targetWpm,
           maximumMarks: exam.maximumMarks,
           passingPercentage: exam.passingPercentage,
+
           scoring: {
             ...exam.scoring,
+            errorPenalties: {
+              ...exam.scoring.errorPenalties,
+            },
+            qualification: {
+              ...exam.scoring.qualification,
+            },
           },
+
           instructions: Array.isArray(exam.instructions)
-            ? exam.instructions
+            ? [...exam.instructions]
             : [],
+
           status: exam.status,
         });
       } catch (error) {
@@ -75,22 +89,24 @@ const EditExamPage = () => {
       }
     };
 
-    fetchExam();
+    void fetchExam();
 
     return () => {
       active = false;
     };
   }, [examId, getExamById, showToast]);
 
-  const handleSubmit = async (values: CreateTypingExamPayload) => {
-    if (!examId || submitting) return;
+  // ==========================================================
+  // SUBMIT EXAMINATION
+  // ==========================================================
 
-    // Only editable examination fields are submitted.
+  const handleSubmit = async (values: CreateTypingExamPayload) => {
+    if (!examId || !initialValues || submitting) return;
+
     const payload: UpdateTypingExamPayload = {
       title: values.title.trim(),
       description: values.description?.trim() ?? "",
       instructions: values.instructions,
-      status: values.status,
     };
 
     try {
@@ -98,12 +114,16 @@ const EditExamPage = () => {
 
       await updateExam(examId, payload);
 
-      showToast("Typing exam updated successfully.", "success");
+      if (values.status && values.status !== initialValues.status) {
+        await updateExamStatus(examId, values.status);
+      }
+
+      showToast("Typing examination updated successfully.", "success");
 
       navigate("/typing-exams");
     } catch (error) {
       showToast(
-        getErrorMessage(error, "Unable to update typing exam."),
+        getErrorMessage(error, "Unable to update typing examination."),
         "error",
       );
     } finally {
@@ -111,9 +131,17 @@ const EditExamPage = () => {
     }
   };
 
+  // ==========================================================
+  // LOADING STATE
+  // ==========================================================
+
   if (loading) {
     return <LoadingSpinner />;
   }
+
+  // ==========================================================
+  // EXAMINATION NOT FOUND
+  // ==========================================================
 
   if (!initialValues) {
     return (
@@ -177,9 +205,14 @@ const EditExamPage = () => {
     );
   }
 
+  // ==========================================================
+  // MAIN PAGE
+  // ==========================================================
+
   return (
     <div className="space-y-5">
-      {/* Back Navigation and Page Header */}
+      {/* BACK NAVIGATION AND HEADER */}
+
       <div className="space-y-2">
         <button
           type="button"
@@ -208,7 +241,8 @@ const EditExamPage = () => {
         />
       </div>
 
-      {/* Locked Configuration Notice */}
+      {/* LOCKED CONFIGURATION NOTICE */}
+
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
         <div className="flex items-start gap-3">
           <svg
@@ -232,13 +266,16 @@ const EditExamPage = () => {
 
             <p className="mt-1 text-xs leading-5 text-amber-700">
               Language, duration, target WPM, maximum marks, passing percentage
-              and scoring configuration cannot be changed after creation.
+              and scoring configuration cannot be changed after creation. You
+              can update the examination title, description, instructions and
+              publication status.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Examination Form */}
+      {/* EXAMINATION FORM */}
+
       <ExamForm
         key={examId}
         initialValues={initialValues}

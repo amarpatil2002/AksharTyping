@@ -1,275 +1,194 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 
-import {
-  LANGUAGES,
-  type TypingPassageLanguage,
-  type TypingPassageDifficulty,
-  type TypingPassageStatus,
-} from "../types/passage.types";
+import PageHeader from "../../../../components/common/PageHeader";
+import { useToast } from "../../../../components/common/ToastContext";
+import { getErrorMessage } from "../../../../utils/getErrorMessage";
 
-export interface PassageFormValues {
-  title: string;
-  language: TypingPassageLanguage;
-  content: string;
-  difficulty: TypingPassageDifficulty;
-  status: TypingPassageStatus;
-}
+import { useTypingPassages } from "../hooks/useTypingPassages";
+import PassageForm, { type PassageFormValues } from "../components/PassageForm";
 
-interface PassageFormProps {
-  initialValues?: Partial<PassageFormValues>;
-  onSubmit: (values: PassageFormValues) => Promise<void>;
-  submitText: string;
-  submitting: boolean;
-  isEdit?: boolean;
-}
+import type { TypingPassage } from "../types/passage.types";
 
-interface PassageFormErrors {
-  title?: string;
-  language?: string;
-  content?: string;
-}
+const EditPassagePage = () => {
+  const { examId, passageId } = useParams<{
+    examId: string;
+    passageId: string;
+  }>();
 
-const getFormValues = (
-  values?: Partial<PassageFormValues>,
-): PassageFormValues => ({
-  title: values?.title ?? "",
-  language: values?.language ?? "english",
-  content: values?.content ?? "",
-  difficulty: values?.difficulty ?? "easy",
-  status: values?.status ?? "draft",
-});
+  const navigate = useNavigate();
 
-const formatLanguage = (language: string) =>
-  language.charAt(0).toUpperCase() + language.slice(1);
+  const { getPassageById, updatePassage, updatePassageStatus } =
+    useTypingPassages();
 
-const PassageForm = ({
-  initialValues,
-  onSubmit,
-  submitText,
-  submitting,
-  isEdit = false,
-}: PassageFormProps) => {
-  const [values, setValues] = useState<PassageFormValues>(() =>
-    getFormValues(initialValues),
-  );
+  const { showToast } = useToast();
 
-  const [errors, setErrors] = useState<PassageFormErrors>({});
+  const [passage, setPassage] = useState<TypingPassage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  // Load passage details.
+  const loadPassage = useCallback(async () => {
+    if (!examId || !passageId) {
+      setError("Invalid examination or passage ID.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+
+      const result = await getPassageById(examId, passageId);
+
+      setPassage(result);
+    } catch (err) {
+      setPassage(null);
+      setError(getErrorMessage(err, "Unable to load passage details."));
+    } finally {
+      setLoading(false);
+    }
+  }, [examId, passageId, getPassageById]);
 
   useEffect(() => {
-    setValues(getFormValues(initialValues));
-    setErrors({});
-  }, [initialValues]);
+    void loadPassage();
+  }, [loadPassage]);
 
-  const handleChange = <K extends keyof PassageFormValues>(
-    field: K,
-    value: PassageFormValues[K],
-  ) => {
-    setValues((previous) => ({
-      ...previous,
-      [field]: value,
-    }));
+  // Update passage.
+  const handleSubmit = async (values: PassageFormValues) => {
+    if (!examId || !passageId || submitting || !passage) return;
 
-    setErrors((previous) => ({
-      ...previous,
-      [field]: undefined,
-    }));
+    try {
+      setSubmitting(true);
+
+      // Update passage content and difficulty.
+      await updatePassage(examId, passageId, {
+        title: values.title.trim(),
+        content: values.content.trim(),
+        difficulty: values.difficulty,
+      });
+
+      // Update publication status through its dedicated endpoint.
+      if (values.status !== passage.status) {
+        await updatePassageStatus(examId, passageId, values.status);
+      }
+
+      showToast("Passage updated successfully.", "success");
+
+      navigate(`/typing-exams/${examId}/passages`);
+    } catch (err) {
+      showToast(getErrorMessage(err, "Unable to update passage."), "error");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const validateForm = (): boolean => {
-    const newErrors: PassageFormErrors = {};
+  // Loading state.
+  if (loading) {
+    return (
+      <div className="flex min-h-[320px] items-center justify-center">
+        <div className="text-center">
+          <div
+            className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600"
+            role="status"
+            aria-label="Loading passage"
+          />
 
-    if (!values.title.trim()) {
-      newErrors.title = "Passage title is required.";
-    } else if (values.title.trim().length < 3) {
-      newErrors.title = "Title must contain at least 3 characters.";
-    }
-
-    if (!values.language) {
-      newErrors.language = "Language is required.";
-    }
-
-    if (!values.content.trim()) {
-      newErrors.content = "Passage content is required.";
-    }
-
-    setErrors(newErrors);
-
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!validateForm()) return;
-
-    await onSubmit({
-      ...values,
-      title: values.title.trim(),
-      content: values.content.trim(),
-    });
-  };
-
-  const wordCount = values.content.trim()
-    ? values.content.trim().split(/\s+/).length
-    : 0;
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Passage Title */}
-      <div>
-        <label
-          htmlFor="title"
-          className="mb-1.5 block text-sm font-medium text-gray-700"
-        >
-          Passage Title <span className="text-red-500">*</span>
-        </label>
-
-        <input
-          id="title"
-          type="text"
-          value={values.title}
-          onChange={(event) => handleChange("title", event.target.value)}
-          placeholder="Enter passage title"
-          disabled={submitting}
-          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
-        />
-
-        {errors.title && (
-          <p className="mt-1 text-xs text-red-600">{errors.title}</p>
-        )}
+          <p className="mt-3 text-sm text-gray-500">Loading passage...</p>
+        </div>
       </div>
+    );
+  }
 
-      {/* Language */}
-      <div>
-        <label
-          htmlFor="language"
-          className="mb-1.5 block text-sm font-medium text-gray-700"
-        >
-          Language <span className="text-red-500">*</span>
-        </label>
+  // Error or passage not found.
+  if (error || !passage) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-900">
+          Unable to load passage
+        </h2>
 
-        <select
-          id="language"
-          value={values.language}
-          disabled={isEdit || submitting}
-          onChange={(event) =>
-            handleChange(
-              "language",
-              event.target.value as TypingPassageLanguage,
+        <p className="mt-2 text-sm text-gray-500">
+          {error || "Passage not found."}
+        </p>
+
+        <button
+          type="button"
+          onClick={() =>
+            navigate(
+              examId ? `/typing-exams/${examId}/passages` : "/typing-exams",
             )
           }
-          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+          className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
         >
-          {LANGUAGES.map((language) => (
-            <option key={language} value={language}>
-              {formatLanguage(language)}
-            </option>
-          ))}
-        </select>
-
-        {isEdit && (
-          <p className="mt-1.5 text-xs text-gray-500">
-            Language cannot be changed after passage creation.
-          </p>
-        )}
-
-        {errors.language && (
-          <p className="mt-1 text-xs text-red-600">{errors.language}</p>
-        )}
-      </div>
-
-      {/* Passage Content */}
-      <div>
-        <div className="mb-1.5 flex items-center justify-between gap-2">
-          <label
-            htmlFor="content"
-            className="text-sm font-medium text-gray-700"
-          >
-            Passage Content <span className="text-red-500">*</span>
-          </label>
-
-          <span className="text-xs text-gray-400">{wordCount} words</span>
-        </div>
-
-        <textarea
-          id="content"
-          rows={12}
-          value={values.content}
-          disabled={submitting}
-          onChange={(event) => handleChange("content", event.target.value)}
-          placeholder="Enter the typing passage content..."
-          className="w-full resize-y rounded-lg border border-gray-300 px-4 py-3 text-sm leading-6 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
-        />
-
-        {errors.content && (
-          <p className="mt-1 text-xs text-red-600">{errors.content}</p>
-        )}
-      </div>
-
-      {/* Difficulty and Status */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label
-            htmlFor="difficulty"
-            className="mb-1.5 block text-sm font-medium text-gray-700"
-          >
-            Difficulty
-          </label>
-
-          <select
-            id="difficulty"
-            value={values.difficulty}
-            disabled={submitting}
-            onChange={(event) =>
-              handleChange(
-                "difficulty",
-                event.target.value as TypingPassageDifficulty,
-              )
-            }
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
-          >
-            <option value="easy">Easy</option>
-            <option value="medium">Medium</option>
-            <option value="hard">Hard</option>
-          </select>
-        </div>
-
-        <div>
-          <label
-            htmlFor="status"
-            className="mb-1.5 block text-sm font-medium text-gray-700"
-          >
-            Status
-          </label>
-
-          <select
-            id="status"
-            value={values.status}
-            disabled={submitting}
-            onChange={(event) =>
-              handleChange("status", event.target.value as TypingPassageStatus)
-            }
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100"
-          >
-            <option value="draft">Draft</option>
-            <option value="published">Published</option>
-            <option value="archived">Archived</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Submit */}
-      <div className="flex justify-end border-t border-gray-100 pt-4">
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {submitting ? "Saving..." : submitText}
+          Back to Passages
         </button>
       </div>
-    </form>
+    );
+  }
+
+  return (
+    <div className="space-y-5 pb-6">
+      {/* Back Navigation */}
+      <button
+        type="button"
+        onClick={() => navigate(`/typing-exams/${examId}/passages`)}
+        className="inline-flex items-center gap-2 text-sm font-medium text-gray-500 transition hover:text-blue-600"
+      >
+        <span aria-hidden="true">←</span>
+        Back to Passages
+      </button>
+
+      {/* Page Header */}
+      <PageHeader
+        title="Edit Passage"
+        description="Update passage content, difficulty and publication status."
+      />
+
+      {/* Passage Information */}
+      <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+              Passage ID
+            </p>
+
+            <p className="mt-1 text-sm font-medium text-gray-800">
+              {passage._id}
+            </p>
+          </div>
+
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+              Word Count
+            </p>
+
+            <p className="mt-1 text-sm font-semibold text-gray-800">
+              {passage.wordCount.toLocaleString()} words
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Passage Form */}
+      <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
+        <PassageForm
+          initialValues={{
+            title: passage.title,
+            language: passage.language,
+            content: passage.content,
+            difficulty: passage.difficulty,
+            status: passage.status,
+          }}
+          onSubmit={handleSubmit}
+          submitText="Update Passage"
+          submitting={submitting}
+          isEdit
+        />
+      </section>
+    </div>
   );
 };
 
-export default PassageForm;
+export default EditPassagePage;

@@ -33,7 +33,46 @@ export type TypingExamScoringMethod =
   | "net_wpm"
   | "accuracy"
   | "weighted"
-  | "custom";
+  | "custom"
+  | "fixed_error_penalty"
+  | "grouped_error_penalty"
+  | "correct_words_ratio"
+  | "qualifying_only"
+  | "speed_based";
+
+export type TypingSpeedCalculation =
+  | "gross_words_per_minute"
+  | "correct_words_per_minute"
+  | "gross_minus_error_penalty";
+
+export type TypingAccuracyCalculation =
+  | "correct_words_divided_by_words_typed"
+  | "correct_words_divided_by_reference_words";
+
+export type TypingNotReachedPolicy =
+  | "no_separate_penalty"
+  | "count_as_error"
+  | "apply_configured_penalty";
+
+export type TypingScoringRounding = "none" | "integer" | "two_decimals";
+
+export interface TypingExamErrorPenalties {
+  spelling?: number;
+  wrongWord?: number;
+  omission?: number;
+  extraWord?: number;
+  capitalization?: number;
+  notReached?: number;
+}
+
+export interface TypingExamQualification {
+  minimumMarks?: number;
+  minimumWpm?: number;
+  minimumAccuracy?: number;
+  maximumErrors?: number | null;
+  maximumErrorPercentage?: number | null;
+  requireAll?: boolean;
+}
 
 export interface TypingExamScoring {
   method: TypingExamScoringMethod;
@@ -43,6 +82,23 @@ export interface TypingExamScoring {
   errorPenalty: number;
   speedWeight: number;
   accuracyWeight: number;
+
+  // Additional scoring fields
+  policyVersion?: number;
+
+  errorPenalties?: TypingExamErrorPenalties;
+
+  errorsPerGroup?: number;
+  groupPenalty?: number;
+
+  speedCalculation?: TypingSpeedCalculation;
+  accuracyCalculation?: TypingAccuracyCalculation;
+
+  notReachedPolicy?: TypingNotReachedPolicy;
+
+  rounding?: TypingScoringRounding;
+
+  qualification?: TypingExamQualification;
 }
 
 export interface TypingExam {
