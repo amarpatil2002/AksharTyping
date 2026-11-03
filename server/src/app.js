@@ -7,7 +7,7 @@ import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
 import adminTypingRoutes from "./modules/admin/typing-exam/index.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
-// import typingExamRoutes from "./modules/exams/typing-exam/TypingExam.routes.js";
+import typingExamRoutes from "./modules/typing-exam/userTypingExam.routes.js";
 
 import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
@@ -69,7 +69,7 @@ app.use("/api/v1/admin/typing", adminTypingRoutes);
 
 //user routes
 app.use("/api/v1/auth", authRoutes);
-// app.use("/api/v1/typing-exam", typingExamRoutes);
+app.use("/api/v1/typing", typingExamRoutes);
 
 app.use((err, req, res, next) => {
   console.error("API Error:", err);

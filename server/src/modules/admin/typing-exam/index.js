@@ -1,13 +1,10 @@
-import express from "express";
+import { Router } from "express";
+import typingExamRoutes from "./exam/adminTypingExam.routes.js";
+import passageRoutes from "./passage/adminTypingPassage.routes.js";
 
-import languageRoutes from "./language-config/language.routes.js";
-import typingConfigRoutes from "./typing-config/typingConfig.routes.js";
-import typingExamRoutes from "./typing/typingExam.routes.js";
+const router = Router();
 
-const router = express.Router();
-
-router.use("/language-config", languageRoutes);
-router.use("/typing-config", typingConfigRoutes);
 router.use("/typing-exam", typingExamRoutes);
+router.use("/passage", passageRoutes);
 
 export default router;
