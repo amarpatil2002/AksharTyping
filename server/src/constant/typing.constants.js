@@ -1,75 +1,80 @@
-export const EXAM_TYPES = ["WORD", "CHARACTER", "HYBRID"];
+export const GROUP_CODES = [
+  "SSC",
+  "RAILWAY",
+  "CENTRAL_GOVT",
+  "STATE_GOVT",
+  "HIGH_COURT",
+];
 
+export const EXAM_TYPES = ["WORD", "CHARACTER", "HYBRID"];
 export const LANGUAGES = [
   "english",
   "hindi",
-  "marathi",
-  "gujarati",
+  "assamese",
   "bengali",
+  "bodo",
+  "dogri",
+  "gujarati",
+  "kannada",
+  "kashmiri",
+  "konkani",
+  "maithili",
+  "malayalam",
+  "manipuri",
+  "marathi",
+  "nepali",
+  "odia",
+  "punjabi",
+  "sanskrit",
+  "santali",
+  "sindhi",
   "tamil",
   "telugu",
-  "kannada",
-  "malayalam",
-  "punjabi",
   "urdu",
-  "odia",
-  "assamese",
-  "sanskrit",
 ];
 
-export const INPUT_METHODS = [
-  "INSCRIPT",
-  "REMIINGTON",
-  "PHONETIC",
-  "TRANSLITERATION",
-  "TYPEWRITER",
-  "CUSTOM",
-  "STANDARD_QWERTY",
+export const POLICY_STATUSES = ["DRAFT", "PUBLISHED", "ARCHIVED"];
+export const VERIFICATION_STATUSES = ["NOT_VERIFIED", "VERIFIED", "REJECTED"];
+export const ATTEMPT_STATUSES = [
+  "IN_PROGRESS",
+  "SUBMITTED",
+  "EVALUATING",
+  "COMPLETED",
+  "EVALUATION_FAILED",
 ];
 
-export const TEXT_DIRECTIONS = ["LTR", "RTL"];
-
-export const MEASUREMENT_UNITS = [
-  "WPM",
-  "CPM",
-  "KDPH",
-  "WORDS",
-  "CHARACTERS",
-  "KEY_DEPRESSIONS",
-];
-
-export const MEASUREMENT_COMPARISONS = ["MINIMUM", "MAXIMUM", "EXACT"];
-
-export const EXAM_STATUSES = ["DRAFT", "PUBLISHED", "PAUSED", "ARCHIVED"];
-
-export const PASSAGE_SELECTION_MODES = [
-  "FIXED",
-  "RANDOM",
-  "CATEGORY_BASED",
-  "ADMIN_ASSIGNED",
-];
-
-export const EXAM_VISIBILITY = ["PUBLIC", "PRIVATE", "UNLISTED", "ASSIGNED"];
-
-export const PASSAGE_DIFFICULTIES = ["EASY", "MEDIUM", "HARD"];
-
-export const PASSAGE_CATEGORIES = [
-  "GENERAL",
-  "HISTORY",
-  "GEOGRAPHY",
-  "SCIENCE",
-  "CURRENT_AFFAIRS",
-  "EDUCATION",
-  "SOCIAL",
-  "ECONOMY",
-  "TECHNOLOGY",
-  "GOVERNMENT",
-  "CUSTOM",
-];
-
-export const INPUT_VALIDATION_STATUSES = [
-  "NOT_REQUIRED",
-  "PENDING",
-  "VALID",
-  "INVALID",
-];
+export const DEFAULT_GROUP_POLICY = {
+  policyCode: "GROUP_DEFAULT",
+  version: 1,
+  status: "DRAFT",
+  verificationStatus: "NOT_VERIFIED",
+  examType: "WORD",
+  measurement: {
+    durationSeconds: 600,
+    wordMethod: "SPACE_SEPARATED",
+    wordLength: 5,
+    characterUnit: "GRAPHEME_CLUSTERS",
+    includeSpaces: true,
+    includePunctuation: true,
+    normalization: "NFC",
+  },
+  scoring: {
+    grossSpeedSource: "TYPED_UNITS",
+    netSpeedSource: "CORRECT_UNITS",
+    penaltyMethod: "NONE",
+    penaltyValue: 0,
+    accuracyMethod: "CORRECT_OVER_TYPED",
+  },
+  qualification: {
+    minimumSpeed: null,
+    maximumErrorPercentage: null,
+    requireAllConditions: true,
+  },
+  resultFields: [
+    "grossSpeed",
+    "netSpeed",
+    "accuracy",
+    "errorCount",
+    "qualificationStatus",
+  ],
+};

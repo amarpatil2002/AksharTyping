@@ -7,7 +7,7 @@ import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
 import adminTypingRoutes from "./modules/admin/typing-exam/index.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
-import typingExamRoutes from "./modules/typing-exam/userTypingExam.routes.js";
+import typingExamRoutes from "./modules/typing/userTyping.routes.js";
 
 import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";

@@ -22,4 +22,17 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
+export class HttpError extends Error {
+  constructor(statusCode = 500, message = "Internal server error.") {
+    super(message);
+
+    this.name = "HttpError";
+    this.statusCode = statusCode;
+    this.status = statusCode;
+    this.isOperational = true;
+
+    Error.captureStackTrace?.(this, HttpError);
+  }
+}
+
 export default errorHandler;
