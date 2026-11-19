@@ -4,10 +4,10 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
-import adminTypingRoutes from "./modules/admin/typing-exam/index.js";
+import adminTypingRoutes from "./modules/typing-exam/routes/adminTyping.routes.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
-import typingExamRoutes from "./modules/typing/userTyping.routes.js";
+import typingExamRoutes from "./modules/typing-exam/routes/userTyping.routes.js";
 
 import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";

@@ -27,11 +27,29 @@ const schema = new Schema(
       ref: "TypingPassage",
       required: true,
     },
+    policyId: {
+      type: Schema.Types.ObjectId,
+      ref: "EvaluationPolicy",
+      default: null,
+    },
     language: { type: String, required: true },
-    startedAt: { type: Date, required: true },
-    submittedAt: { type: Date },
+    startedAt: {
+      type: Date,
+      required: true,
+      default: Date.now,
+    },
+
+    submittedAt: {
+      type: Date,
+      default: null,
+    },
     durationSeconds: { type: Number, min: 0 },
-    typedText: { type: String, required: true, maxlength: 100000 },
+    progressVersion: { type: Number, min: 0, default: 0 },
+    typedText: {
+      type: String,
+      default: "",
+      maxlength: 100000,
+    },
     status: {
       type: String,
       enum: ["STARTED", "SUBMITTED", "EVALUATED", "INVALID", "EXPIRED"],

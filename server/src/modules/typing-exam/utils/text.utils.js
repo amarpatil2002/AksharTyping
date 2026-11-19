@@ -13,9 +13,8 @@ export function countCodePoints(text) {
 
 export function countGraphemes(text) {
   const value = String(text ?? '');
-  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-    return [...segmenter.segment(value)].length;
+  if (graphemeSegmenter) {
+    return [...graphemeSegmenter.segment(value)].length;
   }
   return Array.from(value).length;
 }
@@ -26,3 +25,8 @@ export function countCharacters(text, unit = 'GRAPHEME_CLUSTERS') {
   if (unit === 'GRAPHEME_CLUSTERS') return countGraphemes(text);
   return 0;
 }
+const graphemeSegmenter =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+

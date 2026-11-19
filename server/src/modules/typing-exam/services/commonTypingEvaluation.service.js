@@ -23,6 +23,17 @@ export function calculateCommonTypingResult({
     throw new TypeError("expectedText and typedText must be strings");
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0)
     throw new RangeError("durationSeconds must be greater than zero");
+  if (!rounding || typeof rounding !== "object") {
+    rounding = { method: "ROUND", decimalPlaces: 2 };
+  }
+  if (
+    !Number.isInteger(rounding.decimalPlaces) ||
+    rounding.decimalPlaces < 0 ||
+    rounding.decimalPlaces > 6 ||
+    !["ROUND", "FLOOR", "CEIL", "TRUNCATE"].includes(rounding.method)
+  ) {
+    throw new RangeError("rounding configuration is invalid");
+  }
   const expected = normalizeText(expectedText, normalization);
   const typed = normalizeText(typedText, normalization);
   const alignment = compareText(expected, typed);
@@ -47,7 +58,7 @@ export function calculateCommonTypingResult({
       typed: alignment.typedGraphemes,
       correct: alignment.correctGraphemes,
     },
-    errors: {
+    errorMetrics: {
       total: alignment.totalErrors,
       wordErrors: alignment.wordErrors,
       characterErrors: alignment.incorrectCharacters,

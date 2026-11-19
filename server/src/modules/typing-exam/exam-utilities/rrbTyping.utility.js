@@ -19,6 +19,22 @@ export function evaluateRrbTyping({
   useIgnorableMistakes = true,
   rounding = { method: 'ROUND', decimalPlaces: 2 }
 }) {
+  if (!Number.isSafeInteger(totalWords) || totalWords < 0) {
+    throw new TypeError("totalWords must be a non-negative integer");
+  }
+  if (!Number.isSafeInteger(finalMistakes) || finalMistakes < 0) {
+    throw new TypeError("finalMistakes must be a non-negative integer");
+  }
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    throw new RangeError("durationSeconds must be greater than zero");
+  }
+  if (!Number.isFinite(ignorableMistakePercentage) || ignorableMistakePercentage < 0 || ignorableMistakePercentage > 100) {
+    throw new RangeError("ignorableMistakePercentage must be between 0 and 100");
+  }
+  if (!Number.isFinite(deductionWordsPerMistake) || deductionWordsPerMistake < 0) {
+    throw new RangeError("deductionWordsPerMistake must be non-negative");
+  }
+
   const minutes = safeDivide(durationSeconds, 60);
   const requiredWpm = minimumWpm ?? (language === 'hindi' ? 25 : 30);
 

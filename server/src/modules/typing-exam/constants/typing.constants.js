@@ -1,6 +1,7 @@
 export const EXAM_TYPES = Object.freeze(["WORD", "CHARACTER", "HYBRID"]);
 export const LANGUAGES = Object.freeze([
   "english",
+  "multilingual",
   "hindi",
   "assamese",
   "bengali",

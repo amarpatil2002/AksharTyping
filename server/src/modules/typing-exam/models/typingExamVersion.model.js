@@ -8,4 +8,5 @@ const schema = new Schema({
   status:{type:String,enum:['DRAFT','ACTIVE','RETIRED'],default:'DRAFT',index:true}
 },{timestamps:true,versionKey:false});
 schema.index({examId:1,version:1},{unique:true});
+schema.index({ examId: 1, status: 1, effectiveFrom: 1, effectiveTo: 1 });
 export default models.TypingExamVersion || model('TypingExamVersion',schema);
