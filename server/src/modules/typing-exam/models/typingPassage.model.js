@@ -1,7 +1,8 @@
 import mongoose from "mongoose";
-import { LANGUAGES } from "../constants/typing.constants.js";
+
 const { Schema, model, models } = mongoose;
-const schema = new Schema(
+
+const typingPassageSchema = new Schema(
   {
     examId: {
       type: Schema.Types.ObjectId,
@@ -9,31 +10,70 @@ const schema = new Schema(
       required: true,
       index: true,
     },
-    examVersionId: {
-      type: Schema.Types.ObjectId,
-      ref: "TypingExamVersion",
+
+    title: {
+      type: String,
       required: true,
-      index: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 200,
     },
-    title: { type: String, required: true, trim: true, maxlength: 200 },
-    language: { type: String, enum: LANGUAGES, required: true },
-    content: { type: String, required: true, trim: false, maxlength: 50000 },
-    wordCount: { type: Number, min: 0 },
-    characterCount: { type: Number, min: 0 },
+
+    language: {
+      type: String,
+      required: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    content: {
+      type: String,
+      required: true,
+      maxlength: 50000,
+    },
+
+    wordCount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    characterCount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
     difficulty: {
       type: String,
-      enum: ["EASY", "MEDIUM", "HARD"],
-      default: "MEDIUM",
+      enum: ["easy", "medium", "hard"],
+      default: "medium",
     },
+
     status: {
       type: String,
       enum: ["DRAFT", "ACTIVE", "INACTIVE"],
       default: "DRAFT",
       index: true,
     },
+
+    metadata: {
+      type: Schema.Types.Mixed,
+      default: {},
+    },
   },
-  { timestamps: true, versionKey: false },
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
-schema.index({ examVersionId: 1, status: 1 });
-schema.index({ examId: 1, examVersionId: 1, status: 1, createdAt: 1 });
-export default models.TypingPassage || model("TypingPassage", schema);
+
+typingPassageSchema.index({
+  examId: 1,
+  language: 1,
+  status: 1,
+});
+
+export const TypingPassage =
+  models.TypingPassage ||
+  model("TypingPassage", typingPassageSchema);

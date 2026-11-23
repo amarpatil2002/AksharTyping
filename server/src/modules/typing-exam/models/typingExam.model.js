@@ -1,33 +1,122 @@
 import mongoose from "mongoose";
-import { EXAM_TYPES, LANGUAGES } from "../constants/typing.constants.js";
+
 const { Schema, model, models } = mongoose;
-const schema = new Schema(
+
+const typingExamSchema = new Schema(
   {
-    title: { type: String, required: true, trim: true, maxlength: 200 },
-    slug: { type: String, trim: true, lowercase: true, maxlength: 200 },
-    examCode: {
+    title: {
       type: String,
       required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 200,
+    },
+
+    slug: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
       unique: true,
+      maxlength: 220,
+    },
+
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 2000,
+      default: "",
+    },
+
+    authority: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 120,
+    },
+
+    examCode: {
+      type: String,
       trim: true,
       uppercase: true,
-      maxlength: 100,
+      maxlength: 80,
+      default: "",
     },
-    authority: { type: String, required: true, trim: true, maxlength: 200 },
-    postName: { type: String, required: true, trim: true, maxlength: 200 },
-    recruitmentCycle: { type: String, trim: true, maxlength: 100 },
-    examType: { type: String, enum: EXAM_TYPES, required: true },
-    language: { type: String, enum: LANGUAGES, required: true },
-    description: { type: String, trim: true, maxlength: 2000 },
+
+    postName: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 160,
+    },
+
+    recruitmentCycle: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: "",
+    },
+
+    examType: {
+      type: String,
+      required: true,
+      enum: ["WORD", "CHARACTER", "HYBRID"],
+    },
+
+    language: {
+      type: String,
+      required: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    policyId: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    policyVersion: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    formulaVersion: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
     status: {
       type: String,
       enum: ["DRAFT", "ACTIVE", "INACTIVE", "ARCHIVED"],
       default: "DRAFT",
       index: true,
     },
+
+    isOfficial: {
+      type: Boolean,
+      default: false,
+    },
+
+    metadata: {
+      type: Schema.Types.Mixed,
+      default: {},
+    },
   },
-  { timestamps: true, versionKey: false },
+  {
+    timestamps: true,
+    versionKey: false,
+  },
 );
-schema.index({ slug: 1 }, { unique: true, sparse: true });
-schema.index({ authority: 1, status: 1 });
-export default models.TypingExam || model('TypingExam',schema);
+
+typingExamSchema.index({
+  authority: 1,
+  examType: 1,
+  language: 1,
+  status: 1,
+});
+
+export const TypingExam =
+  models.TypingExam || model("TypingExam", typingExamSchema);

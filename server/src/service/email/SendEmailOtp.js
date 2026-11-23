@@ -1,4 +1,8 @@
 import nodemailer from "nodemailer";
+import dns from "node:dns";
+import dnsPromises from "node:dns/promises";
+
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 const {
   EMAIL_HOST,
@@ -11,27 +15,40 @@ const {
 
 let transporter;
 
-function getTransporter() {
+async function getTransporter() {
   if (!EMAIL_HOST || !EMAIL_PORT || !SMTP_USER || !SMTP_PASS || !EMAIL_FROM) {
     throw new Error("Email SMTP environment variables are missing.");
   }
 
   if (!transporter) {
+    const addresses = await dnsPromises.resolve4(EMAIL_HOST);
+
+    if (!addresses || addresses.length === 0) {
+      throw new Error(`Unable to resolve SMTP host: ${EMAIL_HOST}`);
+    }
+
+    const smtpAddress = addresses[0];
+
     transporter = nodemailer.createTransport({
-      host: EMAIL_HOST,
+      host: smtpAddress,
       port: Number(EMAIL_PORT),
       secure: EMAIL_SECURE === "true",
+
       auth: {
         user: SMTP_USER,
         pass: SMTP_PASS,
+      },
+
+      tls: {
+        servername: EMAIL_HOST,
       },
 
       pool: true,
       maxConnections: 3,
       maxMessages: 100,
 
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
+      connectionTimeout: 30000,
+      greetingTimeout: 15000,
       socketTimeout: 20000,
     });
   }
@@ -46,11 +63,13 @@ const templates = {
     description:
       "Use this code to verify your email and create your Akshar AI account.",
   },
+
   password_reset: {
     subject: "Reset your Akshar AI password",
     heading: "Reset your password",
     description: "Use this code to verify your password reset request.",
   },
+
   change_password: {
     subject: "Change your Akshar AI password",
     heading: "Change your password",
@@ -73,13 +92,14 @@ export async function sendOtpEmail({ email, otp, purpose }) {
     throw new Error("Unsupported OTP email purpose.");
   }
 
-  const mailer = getTransporter();
+  const mailer = await getTransporter();
 
   try {
     const info = await mailer.sendMail({
       from: EMAIL_FROM,
       to: email,
       subject: template.subject,
+
       text: [
         template.heading,
         "",
@@ -93,27 +113,50 @@ export async function sendOtpEmail({ email, otp, purpose }) {
         "",
         "Akshar AI",
       ].join("\n"),
+
       html: `
         <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;color:#1f2937">
           <h2>${template.heading}</h2>
+
           <p>${template.description}</p>
+
           <div style="padding:20px;background:#f3f4f6;border-radius:8px;text-align:center">
-            <span style="font-size:32px;font-weight:bold;letter-spacing:8px">${otp}</span>
+            <span style="font-size:32px;font-weight:bold;letter-spacing:8px">
+              ${otp}
+            </span>
           </div>
+
           <p>This code expires in <strong>5 minutes</strong>.</p>
+
           <p>Never share this code with anyone.</p>
+
           <p style="color:#6b7280;font-size:12px">
             If you did not request this code, ignore this email.
           </p>
+
           <p>— Akshar AI</p>
         </div>
       `,
     });
 
-    return { messageId: info.messageId };
+    return {
+      messageId: info.messageId,
+    };
   } catch (error) {
-    // Do not log the OTP or SMTP credentials.
-    console.error("OTP email delivery failed:", error.message);
-    throw new Error("Unable to send the verification email.");
+    console.error("OTP email delivery failed:", {
+      code: error?.code,
+      command: error?.command,
+      message: error?.message,
+    });
+
+    const deliveryError = new Error(
+      "Unable to send the verification email. Please try again shortly.",
+      { cause: error },
+    );
+
+    deliveryError.statusCode = 503;
+    deliveryError.code = "EMAIL_DELIVERY_UNAVAILABLE";
+
+    throw deliveryError;
   }
 }

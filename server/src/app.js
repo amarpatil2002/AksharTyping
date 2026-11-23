@@ -4,10 +4,9 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
-import adminTypingRoutes from "./modules/typing-exam/routes/adminTyping.routes.js";
-
 import authRoutes from "./modules/auth/auth.routes.js";
-import typingExamRoutes from "./modules/typing-exam/routes/userTyping.routes.js";
+import typingExamRoutes from "./modules/typing-exam/routes/adminTypingExam.routes.js";
+import typingAttemptRoutes from "./modules/typing-exam/routes/typingAttempt.routes.js";
 
 import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
@@ -26,8 +25,6 @@ if (!process.env.MONGODB_URI) {
 if (!process.env.JWT_ACCESS_SECRET) {
   throw new Error("JWT_ACCESS_SECRET is missing from .env.");
 }
-
-const isProduction = process.env.NODE_ENV === "production";
 
 // Only enable this when deployed behind a correctly configured,
 // trusted reverse proxy. Adjust the value for your hosting setup.
@@ -60,69 +57,17 @@ app.get("/api/v1/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// app.use("/api/v1", apiLimiter);
+app.use("/api/v1", apiLimiter);
 app.use("/api/v1/admin", sessionMiddleware);
+app.use("/api/v1/typing/admin", sessionMiddleware);
 
 //admin routes
 app.use("/api/v1/admin/auth", adminAuthRoutes);
-app.use("/api/v1/admin/typing", adminTypingRoutes);
 
 //user routes
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/typing", typingExamRoutes);
-
-app.use((err, req, res, next) => {
-  console.error("API Error:", err);
-
-  if (res.headersSent) {
-    return next(err);
-  }
-
-  // Custom HTTP errors (404, 409, etc.).
-  if (err.statusCode) {
-    return res.status(err.statusCode).json({
-      success: false,
-      message: err.message,
-    });
-  }
-
-  // Duplicate key error.
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern || {})[0];
-
-    return res.status(409).json({
-      success: false,
-      message: "A record with this value already exists.",
-      field: field || null,
-    });
-  }
-
-  // Mongoose validation error.
-  if (err.name === "ValidationError") {
-    return res.status(400).json({
-      success: false,
-      message: "Database validation failed.",
-      errors: Object.values(err.errors).map((error) => ({
-        field: error.path,
-        message: error.message,
-      })),
-    });
-  }
-
-  // Invalid MongoDB ObjectId.
-  if (err.name === "CastError") {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid resource identifier.",
-    });
-  }
-
-  // Default server error.
-  return res.status(500).json({
-    success: false,
-    message: "Internal server error.",
-  });
-});
+app.use("/api/v1/typing/admin", typingExamRoutes);
+app.use("/api/v1/typing", typingAttemptRoutes);
 
 app.use(errorHandler);
 

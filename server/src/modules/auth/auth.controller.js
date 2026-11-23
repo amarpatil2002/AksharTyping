@@ -98,7 +98,6 @@ export async function requestOtp(req, res, next) {
       attempts: 0,
       consumedAt: null,
     });
-
     try {
       await sendOtpEmail({
         email,
@@ -710,4 +709,38 @@ export async function resetPassword(req, res, next) {
   }
 }
 
-export async function changePassword(req, res, next) {}
+export async function changePassword(req, res, next) {
+  try {
+    const { currentPassword, newPassword } = req.validatedBody;
+    const identity = await AuthIdentity.findOne({
+      userId: req.user._id,
+      provider: "password",
+    }).select("+passwordHash");
+
+    if (
+      !identity?.passwordHash ||
+      !(await bcrypt.compare(currentPassword, identity.passwordHash))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password is incorrect.",
+      });
+    }
+
+    identity.passwordHash = await bcrypt.hash(newPassword, 12);
+    await identity.save();
+
+    // Revoke every refresh session so a changed password takes effect everywhere.
+    await RefreshToken.updateMany(
+      { userId: req.user._id, revokedAt: null },
+      { $set: { revokedAt: new Date() } },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully. Please log in again.",
+    });
+  } catch (error) {
+    return next(error);
+  }
+}

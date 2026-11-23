@@ -1,221 +1,390 @@
-# Typing exam API flow
+﻿# Typing Exam API Testing Guide
 
-Base URL for local development:
+This guide follows the routes and validators currently mounted by `src/app.js`.
+
+## 1. Base URL and setup
+
+Start the API from `server/`:
+
+```powershell
+npm run dev
+```
+
+Set a Postman environment variable:
 
 ```text
-http://localhost:5000/api/v1
+baseUrl = http://localhost:5000/api/v1
 ```
 
-Replace the example IDs and credentials with values returned by your API. Admin endpoints use a server-side session cookie. Candidate endpoints use a Bearer access token.
+Check that the server is running:
 
-## 1. Sign in as an admin
-
-An admin account must already exist and have the `admin` role. Save the session cookie and send it on every admin request:
-
-```bash
-curl -i -c admin.cookies -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"YOUR_ADMIN_PASSWORD"}' \
-  http://localhost:5000/api/v1/admin/auth/login
+```http
+GET {{baseUrl}}/health
 ```
 
-## 2. Create an exam
-
-```bash
-curl -b admin.cookies -H "Content-Type: application/json" \
-  -d '{
-    "title":"High Court Typing Test",
-    "slug":"high-court-typing-test",
-    "description":"English typing examination",
-    "authority":"Example High Court",
-    "examCode":"HC-TYPE-01",
-    "postName":"Typist",
-    "recruitmentCycle":"2026",
-    "examType":"WORD",
-    "language":"english",
-    "status":"ACTIVE"
-  }' \
-  http://localhost:5000/api/v1/admin/typing/exams
-```
-
-Copy `data._id` from the response as `EXAM_ID`.
-
-## 3. Create an active exam version
-
-Use an ISO date. The version must be active and within its effective date range for candidates to start attempts.
-
-```bash
-curl -b admin.cookies -H "Content-Type: application/json" \
-  -d '{
-    "examId":"EXAM_ID",
-    "version":"2026-v1",
-    "recruitmentCycle":"2026",
-    "effectiveFrom":"2026-01-01T00:00:00.000Z",
-    "status":"ACTIVE"
-  }' \
-  http://localhost:5000/api/v1/admin/typing/exam-versions
-```
-
-Copy `data._id` as `EXAM_VERSION_ID`.
-
-## 4. Create an active passage
-
-The passage language must match the candidate's attempt language.
-
-```bash
-curl -b admin.cookies -H "Content-Type: application/json" \
-  -d '{
-    "examId":"EXAM_ID",
-    "examVersionId":"EXAM_VERSION_ID",
-    "title":"Practice passage 1",
-    "language":"english",
-    "content":"Typing accuracy and speed are both important skills.",
-    "difficulty":"MEDIUM",
-    "status":"ACTIVE"
-  }' \
-  http://localhost:5000/api/v1/admin/typing/passages
-```
-
-Copy `data._id` as `PASSAGE_ID`.
-
-## 5. Create the evaluation policy
-
-This example uses the High Court generic evaluator for a 20-mark Bombay High Court exam. The one-mark-per-mistake deduction is only an example; set `marksPerMistake` to the official Bombay High Court rule.
-
-```bash
-curl -b admin.cookies -H "Content-Type: application/json" \
-  -d '{
-    "examVersionId":"EXAM_VERSION_ID",
-    "name":"High Court English 2026 scoring",
-    "version":1,
-    "evaluator":"HIGH_COURT_GENERIC_WPM",
-    "measurement":{"unit":"WPM"},
-    "duration":{"seconds":600},
-    "normalization":"NFC",
-    "speed":{"grossMethod":"TOTAL_WORDS","netMethod":"CORRECT_WORDS"},
-    "errors":{"method":"WORD_BASED","allowedPercentage":5},
-    "penalty":{"method":"NONE","value":0},
-    "scoring":{"maximumMarks":20,"marksPerMistake":1},
-    "qualification":{"minimumSpeed":30,"maximumErrors":20},
-    "rounding":{"method":"ROUND","decimalPlaces":2}
-  }' \
-  http://localhost:5000/api/v1/admin/typing/evaluation-policies
-```
-
-The newest active policy version is attached to attempts when they start. Create a new policy version to change rules for future attempts; existing attempts keep their policy. With this example, 4 mistakes produce 16/20; the deduction value must reflect the official scoring rule.
-
-For an RRB evaluator, use `RRB_NTPC_CBTST`, `RRB_LEGACY_25_30`, or `RRB_40_35_NO_IGNORABLE`. RRB policies must use `WORD_BASED` errors and `NONE` penalty and cannot include `scoring`. Optional RRB settings belong in `evaluatorConfig`, for example:
+Expected response:
 
 ```json
-"evaluatorConfig": {
-  "minimumWpm": 30,
-  "useIgnorableMistakes": false,
-  "ignorableMistakePercentage": 0,
-  "deductionWordsPerMistake": 10
+{ "status": "ok" }
+```
+
+The API also needs a working MongoDB connection and `JWT_ACCESS_SECRET`. Candidate signup needs OTP email delivery configured in `.env`. For testing, use a mailbox you can access. Admin login requires an existing user with the `admin` role.
+
+### Admin session
+
+Admin credentials must already exist. Log in before calling endpoints marked as requiring an admin session; Postman should retain the `akshar.admin.sid` cookie automatically:
+
+```http
+POST {{baseUrl}}/admin/auth/login
+Content-Type: application/json
+```
+
+```json
+{
+  "email": "admin@example.com",
+  "password": "YOUR_ADMIN_PASSWORD"
 }
 ```
 
-## 6. Create a candidate account (if needed)
+The typing admin routes use the same session cookie. `app.js` mounts the session middleware on `/api/v1/typing/admin`.
 
-Request an email verification code:
+> **Current route access:** candidate routes require a Bearer token. The admin catalog and policy-attachment routes require an admin session cookie. The admin exam, version, passage, and policy CRUD routes currently have their `requireAdminSession` middleware commented out in `typingExam.routes.js`; they are accessible without a session in this checkout. Re-enable those guards before exposing the API outside a trusted development environment.
 
-```bash
-curl -H "Content-Type: application/json" \
-  -d '{"email":"candidate@example.com","purpose":"verify_email"}' \
-  http://localhost:5000/api/v1/auth/request-otp
+## 2. Candidate account and token
+
+If you already have an active candidate account, skip to **Login**.
+
+### Request email verification code
+
+```http
+POST {{baseUrl}}/auth/request-otp
+Content-Type: application/json
 ```
 
-Verify the emailed six-digit code:
-
-```bash
-curl -H "Content-Type: application/json" \
-  -d '{"email":"candidate@example.com","otp":"123456"}' \
-  http://localhost:5000/api/v1/auth/verify-otp
+```json
+{
+  "email": "candidate@example.com",
+  "purpose": "verify_email"
+}
 ```
 
-Register, then sign in:
+Enter the six-digit code delivered to the mailbox:
 
-```bash
-curl -H "Content-Type: application/json" \
-  -d '{"name":"Example Candidate","email":"candidate@example.com","password":"A-strong-password-123"}' \
-  http://localhost:5000/api/v1/auth/register
-
-curl -H "Content-Type: application/json" \
-  -d '{"email":"candidate@example.com","password":"A-strong-password-123"}' \
-  http://localhost:5000/api/v1/auth/login
+```http
+POST {{baseUrl}}/auth/verify-otp
+Content-Type: application/json
 ```
 
-Copy `data.accessToken` from login and use it as `USER_TOKEN` below. Existing verified candidates can start at login.
-
-## 7. Discover active exams, versions, and passages
-
-The exam list is public. Detail, versions, and passage routes require a Bearer token.
-
-```bash
-curl http://localhost:5000/api/v1/typing/exams
-
-curl -H "Authorization: Bearer USER_TOKEN" \
-  http://localhost:5000/api/v1/typing/exams/EXAM_ID/versions
-
-curl -H "Authorization: Bearer USER_TOKEN" \
-  http://localhost:5000/api/v1/typing/exam-versions/EXAM_VERSION_ID/passages
+```json
+{
+  "email": "candidate@example.com",
+  "otp": "123456"
+}
 ```
 
-The passage response includes its content and ID. You can also fetch one passage with `GET /api/v1/typing/passages/PASSAGE_ID`.
+Register using the same email before the verification record expires:
 
-## 8. Start an attempt
-
-```bash
-curl -H "Authorization: Bearer USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "examId":"EXAM_ID",
-    "examVersionId":"EXAM_VERSION_ID",
-    "passageId":"PASSAGE_ID",
-    "language":"english"
-  }' \
-  http://localhost:5000/api/v1/typing/attempts
+```http
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
 ```
 
-Save the returned `data.attemptId` and `data.durationSeconds`. The timer starts on the server when the attempt is created.
-
-## 9. Submit the typed passage
-
-```bash
-curl -H "Authorization: Bearer USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "typedText":"Typing accuracy and speed are both important skills.",
-    "progressVersion":1
-  }' \
-  http://localhost:5000/api/v1/typing/attempts/ATTEMPT_ID/submit
+```json
+{
+  "name": "Typing Candidate",
+  "email": "candidate@example.com",
+  "password": "ExamplePass123!"
+}
 ```
 
-The response contains common typing metrics under `data.common` and exam scoring and qualification under `data.exam`. If scoring is configured, marks are under `data.exam.score.marks`.
+### Login
 
-## 10. Retrieve a result later
-
-```bash
-curl -H "Authorization: Bearer USER_TOKEN" \
-  http://localhost:5000/api/v1/typing/attempts/ATTEMPT_ID
+```http
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
 ```
 
-Only the candidate who owns the attempt can retrieve it. Repeating the same submit request is safe; a different typed passage cannot replace an existing submission.
-
-## Admin utilities
-
-List and filter exams:
-
-```bash
-curl -b admin.cookies \
-  "http://localhost:5000/api/v1/admin/typing/exams?page=1&limit=20&status=ACTIVE&language=english"
+```json
+{
+  "email": "candidate@example.com",
+  "password": "ExamplePass123!"
+}
 ```
 
-Update an exam:
+Copy `data.accessToken` from the response into a Postman environment variable named `accessToken`. For candidate typing calls, set:
 
-```bash
-curl -X PATCH -b admin.cookies -H "Content-Type: application/json" \
-  -d '{"description":"Updated exam information"}' \
-  http://localhost:5000/api/v1/admin/typing/exams/EXAM_ID
+```http
+Authorization: Bearer {{accessToken}}
 ```
 
-Admin session endpoints are `POST /api/v1/admin/auth/login`, `GET /api/v1/admin/auth/me`, and `POST /api/v1/admin/auth/logout`.
+## 3. Create a test policy
+
+Create the policy before the exam version because the version requires a `policyId`.
+
+```http
+POST {{baseUrl}}/typing/admin/policies
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "Local typing API test policy",
+  "version": "test-v1",
+  "evaluator": "STANDARD_WORD",
+  "stages": [
+    {
+      "code": "TYPING_STAGE",
+      "name": "Typing stage",
+      "order": 1,
+      "components": [
+        {
+          "code": "ENGLISH_TYPING",
+          "name": "English typing",
+          "type": "TYPING_SPEED",
+          "language": "english",
+          "durationSeconds": 600,
+          "maxMarks": 20,
+          "measurement": {
+            "unit": "WPM",
+            "target": 20,
+            "minimum": 0,
+            "maximum": 200
+          },
+          "scoring": {
+            "method": "PERCENTAGE",
+            "maxMarks": 20
+          },
+          "qualification": {
+            "type": "MIN_PERCENTAGE",
+            "value": 50,
+            "required": true
+          }
+        }
+      ]
+    }
+  ],
+  "errorRules": {
+    "caseSensitive": true,
+    "punctuationSensitive": true,
+    "normalization": "NFC",
+    "wordMethod": "PASSAGE_ALIGNMENT",
+    "characterUnit": "GRAPHEME_CLUSTERS",
+    "includeSpaces": false,
+    "includePunctuation": true
+  },
+  "finalResult": {
+    "strategy": "SUM_COMPONENTS",
+    "maxMarks": 20,
+    "qualification": {
+      "type": "MIN_PERCENTAGE",
+      "value": 50
+    }
+  },
+  "status": "DRAFT"
+}
+```
+
+Save `data._id` as `policyId`. Activate it:
+
+```http
+POST {{baseUrl}}/typing/admin/policies/{{policyId}}/activate
+```
+
+Activation is required before a candidate can start an attempt.
+
+## 4. Create an exam
+
+```http
+POST {{baseUrl}}/typing/admin/exams
+Content-Type: application/json
+```
+
+```json
+{
+  "title": "Local Typing Practice Exam",
+  "slug": "local-typing-practice",
+  "description": "Practice exam for API testing",
+  "authority": "Local Test Authority",
+  "examCode": "LOCAL_TYPING_TEST",
+  "postName": "Typing Candidate",
+  "recruitmentCycle": "2026",
+  "examType": "WORD",
+  "language": "english",
+  "status": "ACTIVE"
+}
+```
+
+Save `data._id` as `examId`. `examCode` accepts uppercase letters, digits, and underscores.
+
+## 5. Create an exam version
+
+Use the policy ID from step 3. `name` is not an exam-version field; the policy name was sent to the policy endpoint above.
+
+```http
+POST {{baseUrl}}/typing/admin/exam-versions
+Content-Type: application/json
+```
+
+```json
+{
+  "examId": "{{examId}}",
+  "version": "2026-test-v1",
+  "recruitmentCycle": "2026",
+  "effectiveFrom": "2026-01-01T00:00:00.000Z",
+  "policyId": "{{policyId}}",
+  "status": "ACTIVE"
+}
+```
+
+Save `data._id` as `examVersionId`. The ID fields must be MongoDB ObjectIds returned by earlier create calls.
+
+## 6. Create a passage
+
+The passage must belong to the version and use the component language (`english`). The API calculates `wordCount` and `characterCount` from `content`.
+
+```http
+POST {{baseUrl}}/typing/admin/passages
+Content-Type: application/json
+```
+
+```json
+{
+  "examVersionId": "{{examVersionId}}",
+  "title": "Local practice passage",
+  "language": "english",
+  "content": "Typing practice helps candidates improve speed and accuracy. Read each word carefully and keep a steady rhythm while completing the passage.",
+  "difficulty": "easy",
+  "status": "ACTIVE"
+}
+```
+
+Save `data._id` as `passageId`.
+
+## 7. Discover exams and passages
+
+List active exams:
+
+```http
+GET {{baseUrl}}/typing/exams?page=1&limit=20
+Authorization: Bearer {{accessToken}}
+```
+
+Get an exam by code:
+
+```http
+GET {{baseUrl}}/typing/exams/LOCAL_TYPING_TEST
+Authorization: Bearer {{accessToken}}
+```
+
+List active passages for the version:
+
+```http
+GET {{baseUrl}}/typing/passages?examVersionId={{examVersionId}}&language=english&page=1&limit=20
+Authorization: Bearer {{accessToken}}
+```
+
+## 8. Start and submit an attempt
+
+Start an attempt using the component code configured in the policy:
+
+```http
+POST {{baseUrl}}/typing/attempts/start
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+```
+
+```json
+{
+  "examVersionId": "{{examVersionId}}",
+  "passageId": "{{passageId}}",
+  "componentCode": "ENGLISH_TYPING",
+  "inputMetadata": {
+    "keyboardLayout": "QWERTY"
+  },
+  "clientMetadata": {
+    "client": "Postman"
+  }
+}
+```
+
+Save `data._id` as `attemptId`. Wait at least one second after starting, then submit the passage text. The server measures elapsed time and rejects a duration below one second or above the configured component duration (plus a five-second allowance).
+
+```http
+POST {{baseUrl}}/typing/attempts/{{attemptId}}/submit
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+```
+
+```json
+{
+  "typedText": "Typing practice helps candidates improve speed and accuracy. Read each word carefully and keep a steady rhythm while completing the passage.",
+  "clientMetadata": {
+    "client": "Postman"
+  }
+}
+```
+
+The response contains the evaluation, including alignment, error metrics, speed, accuracy, component score, and qualification. Do not send marks, speed, or duration; those values are computed by the server.
+
+Each candidate can make at most three attempts per component for an exam version.
+
+## 9. Read candidate results and history
+
+```http
+GET {{baseUrl}}/typing/me/attempts
+Authorization: Bearer {{accessToken}}
+```
+
+```http
+GET {{baseUrl}}/typing/me/results
+Authorization: Bearer {{accessToken}}
+```
+
+```http
+GET {{baseUrl}}/typing/results/{{examVersionId}}
+Authorization: Bearer {{accessToken}}
+```
+
+```http
+GET {{baseUrl}}/typing/me/dashboard?examVersionId={{examVersionId}}
+Authorization: Bearer {{accessToken}}
+```
+
+## 10. Admin policy management endpoints
+
+All paths below are relative to `{{baseUrl}}/typing`:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/admin/catalog` | List supported built-in catalogs (admin session required) |
+| POST | `/admin/catalog/install` | Install a built-in exam and draft policy/version (admin session required) |
+| GET | `/admin/exams` | List exams; supports `page`, `limit`, `status`, `examType`, `authority`, `language` |
+| POST | `/admin/exams` | Create an exam |
+| POST | `/admin/exam-versions` | Create a version; requires `examId`, `version`, `recruitmentCycle`, `policyId` |
+| POST | `/admin/passages` | Create a passage |
+| POST | `/admin/policies` | Create a policy |
+| GET | `/admin/policies` | List policies |
+| GET | `/admin/policies/:policyId` | Read a policy |
+| POST | `/admin/policies/:policyId/revisions` | Create a policy revision |
+| POST | `/admin/policies/:policyId/activate` | Activate a policy |
+| POST | `/admin/policies/:policyId/retire` | Retire a policy |
+| PATCH | `/admin/exam-versions/:versionId/policy` | Attach an active policy to a version (admin session required) |
+
+To install a built-in catalog, post one of these codes to `/admin/catalog/install`:
+
+```json
+{ "examCode": "RSSB_LDC_JA" }
+```
+
+Other supported codes are `MPSC_GROUP_C` and `BOMBAY_HC_CLERK`. Installation creates or updates catalog data in `DRAFT` state. Inspect and activate the resulting policy/version before using them for candidate attempts.
+
+## 11. Common validation and runtime errors
+
+- `Validation failed`: field names or enum values do not match the endpoint schema. Check the field path in `errors`.
+- `Invalid ObjectId`: use an `_id` returned by a prior API response, not an exam code or name.
+- `Active evaluation policy not found`: activate the policy before starting attempts.
+- `Component is not configured`: `componentCode` must match a policy component, such as `ENGLISH_TYPING`.
+- `Passage does not belong to exam version`: create the passage with the same `examVersionId` used to start the attempt.
+- `Invalid attempt duration`: wait at least one second before submitting, and keep within `durationSeconds`.
+- `Maximum attempts reached`: the candidate has used all three attempts for that component/version.
+- Duplicate record response: use a new `slug`, `examCode`, or exam version as appropriate.
