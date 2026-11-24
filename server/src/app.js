@@ -5,8 +5,8 @@ import cookieParser from "cookie-parser";
 
 import adminAuthRoutes from "./modules/admin/admin-auth/adminAuth.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
-import typingExamRoutes from "./modules/typing-exam/routes/adminTypingExam.routes.js";
-import typingAttemptRoutes from "./modules/typing-exam/routes/typingAttempt.routes.js";
+import typingExamRoutes from "./modules/typing-exam/routes/adminTyping.routes.js";
+import typingAttemptRoutes from "./modules/typing-exam/routes/userTyping.routes.js";
 
 import errorHandler from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiters.js";
